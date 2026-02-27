@@ -234,7 +234,8 @@
 
 (describe "slacko--display-results"
   (it "handles successful response with matches"
-    (let* ((response `((ok . t)
+    (let* ((slacko--current-host "workspace.slack.com")
+           (response `((ok . t)
                        (messages . ((matches . (((username . "test")
                                                   (user . "U123")
                                                   (text . "test message")
@@ -262,7 +263,8 @@
           (expect content :to-match "test message")))))
 
   (it "handles zero total gracefully"
-    (let* ((response `((ok . t)
+    (let* ((slacko--current-host "workspace.slack.com")
+           (response `((ok . t)
                        (messages . ((matches . nil)
                                     (total . 0)
                                     (paging . ((page . 1)

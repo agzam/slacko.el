@@ -338,11 +338,12 @@ If APPEND is non-nil, append to existing results."
                 (when saved-point (goto-char saved-point))
                 (when saved-window-start
                   (set-window-start (get-buffer-window (current-buffer)) saved-window-start)))
-            (unless (eq major-mode 'slacko-search-mode)
-              (slacko-search-mode))
-            ;; Set host for workspace emoji resolution
+            ;; Set host for workspace emoji resolution before enabling
+            ;; the mode, so slacko-emoji-mode can fetch custom emojis
             (setq slacko-emoji--buffer-host
                   (or slacko--current-host (slacko--default-host)))
+            (unless (eq major-mode 'slacko-search-mode)
+              (slacko-search-mode))
             (goto-char (point-min)))
           
           ;; Load next page if available, but only after appending results

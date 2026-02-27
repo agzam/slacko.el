@@ -161,10 +161,11 @@ CHANNEL-ID and URL are for context."
         (dolist (reply replies)
           (slacko-render-message
            (slacko-thread--normalize-message reply host channel-id 2))))
+      ;; Set host for workspace emoji resolution before enabling
+      ;; the mode, so slacko-emoji-mode can fetch custom emojis
+      (setq slacko-emoji--buffer-host host)
       (unless (eq major-mode 'slacko-thread-mode)
         (slacko-thread-mode))
-      ;; Set host for workspace emoji resolution
-      (setq slacko-emoji--buffer-host host)
       (goto-char (point-min)))
     (switch-to-buffer buf)))
 
