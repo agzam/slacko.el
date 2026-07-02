@@ -29,6 +29,7 @@
 (declare-function slacko-open-in-slack "slacko" nil)
 
 (defvar slacko-emoji--buffer-host) ; forward declaration from slacko-emoji.el
+(declare-function slacko-emoji--maybe-enable "slacko-emoji")
 
 ;;; Customizable Variables
 
@@ -183,7 +184,12 @@ CHANNEL-ID and URL are for context."
 Derived from `org-mode'.
 \\{slacko-thread-mode-map}"
   (setq buffer-read-only t)
-  (slacko-render-setup-font-lock))
+  (slacko-render-setup-font-lock)
+  ;; emojify checked first: slacko-emoji hard-requires it, and a bare
+  ;; NOERROR require would still signal from that inner require.
+  (when (and (require 'emojify nil t)
+             (require 'slacko-emoji nil t))
+    (slacko-emoji--maybe-enable)))
 
 ;;; Interactive Commands
 

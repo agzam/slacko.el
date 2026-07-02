@@ -159,6 +159,19 @@
     (expect (slacko-mrkdwn--convert-blockquotes "normal\n&gt; quoted\nnormal again")
             :to-equal "normal\n│ quoted\nnormal again")))
 
+(describe "slacko-mrkdwn--decode-entities"
+  (it "decodes &amp;"
+    (expect (slacko-mrkdwn--decode-entities "fish &amp; chips")
+            :to-equal "fish & chips"))
+
+  (it "decodes &lt; and &gt;"
+    (expect (slacko-mrkdwn--decode-entities "1 &lt; 2 &gt; 3")
+            :to-equal "1 < 2 > 3"))
+
+  (it "decodes &amp; last so double-encoded entities stay literal"
+    (expect (slacko-mrkdwn--decode-entities "&amp;gt; &amp;lt; &amp;amp;")
+            :to-equal "&gt; &lt; &amp;")))
+
 (describe "slacko-mrkdwn-to-org"
   (it "handles nil input"
     (expect (slacko-mrkdwn-to-org nil)
@@ -228,7 +241,29 @@
            (result (slacko-mrkdwn-to-org input)))
       (expect result :to-match "~inline code~")
       (expect result :to-match "~code~")
-      (expect result :to-match "\\[\\[https://example.com\\]\\]"))))
+      (expect result :to-match "\\[\\[https://example.com\\]\\]")))
+
+  (it "decodes &amp; in prose (user-reported example)"
+    (let ((input "\"You can also, in all directives, specify keys after &amp; which will not be bound, for documentation or checking purposes.\""))
+      (expect (slacko-mrkdwn-to-org input)
+              :to-equal "\"You can also, in all directives, specify keys after & which will not be bound, for documentation or checking purposes.\"")))
+
+  (it "decodes mid-line &gt;"
+    (expect (slacko-mrkdwn-to-org "foo &gt; bar")
+            :to-match "foo > bar"))
+
+  (it "converts line-start &gt; to a quote bar before decoding inner entities"
+    (expect (slacko-mrkdwn-to-org "&gt; quoted &amp; text")
+            :to-equal "│ quoted & text"))
+
+  (it "decodes entities inside inline code"
+    (expect (slacko-mrkdwn-to-org "`a &amp;&amp; b`")
+            :to-match "~a && b~"))
+
+  (it "decodes entities inside code blocks"
+    (let ((result (slacko-mrkdwn-to-org "```\nif (a &lt; b &amp;&amp; b &gt; c) {}\n```")))
+      (expect result :to-match "#\\+begin_src")
+      (expect result :to-match "if (a < b && b > c) {}"))))
 
 ;; Local Variables:
 ;; package-lint-main-file: "slacko.el"

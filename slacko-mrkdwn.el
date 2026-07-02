@@ -126,6 +126,16 @@ Converts to `│' prefix for a lightweight visual quote indicator."
   (replace-regexp-in-string
    "^&gt; ?" "│ " text))
 
+(defun slacko-mrkdwn--decode-entities (text)
+  "Decode Slack's HTML entities in TEXT.
+Slack escapes only `&', `<' and `>'.  `&amp;' must be decoded last,
+otherwise double-encoded text like `&amp;gt;' would collapse to `>'."
+  (replace-regexp-in-string
+   "&amp;" "&"
+   (replace-regexp-in-string
+    "&gt;" ">"
+    (replace-regexp-in-string "&lt;" "<" text))))
+
 (defun slacko-mrkdwn-to-org (text)
   "Convert Slack mrkdwn TEXT to `org-mode' format.
 
@@ -177,8 +187,11 @@ Not yet implemented:
                text-with-placeholders
                t t)))
       
-      ;; Finally convert inline code
-      (slacko-mrkdwn--convert-inline-code text-with-placeholders))))
+      ;; Convert inline code, then decode HTML entities last: they are
+      ;; transport encoding, so they must decode even inside code blocks,
+      ;; and blockquote conversion above consumed the literal "&gt; " lines.
+      (slacko-mrkdwn--decode-entities
+       (slacko-mrkdwn--convert-inline-code text-with-placeholders)))))
 
 (provide 'slacko-mrkdwn)
 ;; Local Variables:

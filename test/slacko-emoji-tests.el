@@ -19,6 +19,8 @@
 
 (require 'buttercup)
 (require 'slacko-emoji)
+(require 'slacko)
+(require 'slacko-thread)
 
 (describe "slacko-emoji--shortcode-to-unicode"
   (before-all
@@ -177,6 +179,26 @@
       (let ((count-ovs (seq-filter (lambda (ov) (overlay-get ov 'slacko-emoji-count))
                                    (overlays-in (point-min) (point-max)))))
         (expect (length count-ovs) :to-equal 0)))))
+
+(describe "slacko-emoji--buffer-host"
+  (it "survives kill-all-local-variables (permanent-local)"
+    (with-temp-buffer
+      (setq slacko-emoji--buffer-host "foo.slack.com")
+      (kill-all-local-variables)
+      (expect slacko-emoji--buffer-host :to-equal "foo.slack.com"))))
+
+(describe "auto-enable"
+  (it "slacko-search-mode calls slacko-emoji--maybe-enable"
+    (spy-on 'slacko-emoji--maybe-enable)
+    (with-temp-buffer
+      (slacko-search-mode)
+      (expect 'slacko-emoji--maybe-enable :to-have-been-called)))
+
+  (it "slacko-thread-mode calls slacko-emoji--maybe-enable"
+    (spy-on 'slacko-emoji--maybe-enable)
+    (with-temp-buffer
+      (slacko-thread-mode)
+      (expect 'slacko-emoji--maybe-enable :to-have-been-called))))
 
 (describe "slacko-emoji reveal/conceal"
   (before-all

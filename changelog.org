@@ -3,6 +3,15 @@
 
 All notable changes to this project will be documented in this file.
 
+* [1.3.0] - 2026-07-02
+** Fixed
+- HTML entities in messages (~&amp;~, ~&lt;~, ~&gt;~) now decode to their literal characters instead of rendering raw; decoding runs as the last mrkdwn->org step so blockquotes, links, and double-encoded entities (~&amp;gt;~) stay correct
+- ~slacko-emoji-mode~ auto-enables in search and thread buffers - the hook wiring previously sat behind ~with-eval-after-load~ forms that never fired because nothing loaded ~slacko-emoji~; the mode bodies now soft-require it, keeping ~emojify~ an optional dependency
+- ~slacko-emoji--buffer-host~ is marked permanent-local: it is set before the major-mode call and ~kill-all-local-variables~ was wiping it, so workspace custom emojis never fetched on the first render
+
+** Changed
+- Credentials extraction reworked: workspaces are discovered from Slack's IndexedDB and a fresh ~api_token~ is fetched from each workspace's HTML page, replacing LevelDB token grepping and per-token ~auth.test~ identification; the Cookies DB is copied before querying so a running Slack app can't lock it
+
 * [1.2.0] - 2026-02-20
 ** Added
 - Custom workspace emoji support: emojis uploaded to a Slack workspace (e.g. ~:laughcry:~) now render as inline images instead of raw shortcodes

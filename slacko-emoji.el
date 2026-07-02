@@ -44,6 +44,11 @@
 Set by the rendering pipeline so the emoji resolver knows which
 workspace's custom emojis to use.")
 
+;; Must survive the major-mode change: the display functions set the
+;; host before enabling the mode, and `kill-all-local-variables'
+;; would otherwise wipe it before the mode body runs.
+(put 'slacko-emoji--buffer-host 'permanent-local t)
+
 (defface slacko-emoji-count
   '((t :height 0.7 :inherit default))
   "Face for reaction count superscripts next to emoji."
@@ -325,12 +330,6 @@ an emoji (org-appear style)."
   "Enable `slacko-emoji-mode' if running in a graphical display."
   (when (display-graphic-p)
     (slacko-emoji-mode 1)))
-
-(with-eval-after-load 'slacko
-  (add-hook 'slacko-search-mode-hook #'slacko-emoji--maybe-enable))
-
-(with-eval-after-load 'slacko-thread
-  (add-hook 'slacko-thread-mode-hook #'slacko-emoji--maybe-enable))
 
 (provide 'slacko-emoji)
 ;;; slacko-emoji.el ends here

@@ -6,7 +6,7 @@
 ;; Maintainer: Ag Ibragimov <agzam.ibragimov@gmail.com>
 ;; Created: October 18, 2025
 ;; Modified: January 20, 2025
-;; Version: 1.2.0
+;; Version: 1.3.0
 ;; Keywords: tools
 ;; Homepage: https://github.com/agzam/slacko
 ;; Package-Requires: ((emacs "30.2"))
@@ -29,6 +29,7 @@
 (require 'slacko-thread)
 
 (defvar slacko-emoji--buffer-host) ; forward declaration from slacko-emoji.el
+(declare-function slacko-emoji--maybe-enable "slacko-emoji")
 
 ;;; Customizable Variables
 
@@ -384,7 +385,12 @@ author, channel, timestamp, and message content with proper formatting.
 
 \\{slacko-search-mode-map}"
   (setq buffer-read-only t)
-  (slacko-render-setup-font-lock))
+  (slacko-render-setup-font-lock)
+  ;; emojify checked first: slacko-emoji hard-requires it, and a bare
+  ;; NOERROR require would still signal from that inner require.
+  (when (and (require 'emojify nil t)
+             (require 'slacko-emoji nil t))
+    (slacko-emoji--maybe-enable)))
 
 ;;; Interactive Commands
 
