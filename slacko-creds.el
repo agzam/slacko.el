@@ -16,9 +16,10 @@
 ;;; Commentary:
 ;;
 ;; Extract Slack API tokens and session cookies directly from the Slack
-;; desktop app's local data files (LevelDB for tokens, Cookies SQLite
-;; for the encrypted `d' cookie).  Cache them in a GPG-encrypted file
-;; in netrc format for use with `auth-source'.
+;; desktop app's local data.  Discovers workspaces from IndexedDB,
+;; decrypts the session cookie from the Cookies SQLite database, then
+;; fetches each workspace's API token from its HTML page.  Caches
+;; results in a GPG-encrypted file in netrc format for `auth-source'.
 ;;
 ;; Currently macOS only.  The cookie decryption relies on:
 ;; - `security' (Keychain access)
@@ -75,17 +76,44 @@ Uses `slacko-creds-gpg-key' if set, otherwise auto-detects."
             (error "No GPG secret key found. Set `slacko-creds-gpg-key'")
           output))))
 
-;;; Token extraction
+;;; Workspace discovery
 
-(defun slacko-creds--extract-tokens ()
-  "Extract xoxc tokens from the Slack app's data directory.
-Searches across Local Storage, IndexedDB, Service Worker caches,
-and other binary files.  Returns a list of unique token strings."
-  (let* ((cmd (format "rg -aoN --no-filename 'xoxc-[A-Za-z0-9_-]+' %s 2>/dev/null | sort -u"
-                      (shell-quote-argument slacko-creds-slack-data-dir)))
+(defconst slacko-creds--generic-slack-hosts
+  '("app" "files" "s" "pp" "api" "edgeapi" "slack-edge")
+  "Slack subdomains that are not real workspaces.")
+
+(defun slacko-creds--discover-workspaces ()
+  "Find workspace hostnames from Slack's IndexedDB files.
+Returns a list of hostnames like (\"foo.slack.com\" \"bar.slack.com\")."
+  (let* ((idb-dir (expand-file-name "IndexedDB/" slacko-creds-slack-data-dir))
+         (cmd (format "rg -aoN --no-filename '%s' %s 2>/dev/null | sort -u"
+                      "[a-z0-9-]+\\.slack\\.com"
+                      (shell-quote-argument idb-dir)))
          (output (string-trim (shell-command-to-string cmd))))
     (when (and output (not (string-empty-p output)))
-      (split-string output "\n" t))))
+      (cl-remove-if
+       (lambda (host)
+         (member (car (split-string host "\\.")) slacko-creds--generic-slack-hosts))
+       (split-string output "\n" t)))))
+
+(defun slacko-creds--extract-token-from-html (host cookie)
+  "Fetch HOST's homepage with COOKIE and extract the api_token.
+Returns the xoxc token string or nil."
+  (let* ((url-request-method "GET")
+         (url-request-extra-headers
+          `(("Cookie" . ,(format "d=%s;" cookie))))
+         (url-cookie-storage nil)
+         (url-cookie-secure-storage nil)
+         (buf (url-retrieve-synchronously
+               (format "https://%s/" host) t nil 15)))
+    (when buf
+      (unwind-protect
+          (with-current-buffer buf
+            (goto-char (point-min))
+            (when (re-search-forward
+                   "\"api_token\":\"\\(xoxc-[^\"]+\\)\"" nil t)
+              (match-string 1)))
+        (kill-buffer buf)))))
 
 ;;; Cookie decryption (Cookies SQLite + Keychain + OpenSSL)
 
@@ -103,14 +131,18 @@ and other binary files.  Returns a list of unique token strings."
   "Decrypt the Slack `d' cookie from the Cookies SQLite database.
 Returns the cookie value string or nil."
   (let* ((cookies-db (expand-file-name "Cookies" slacko-creds-slack-data-dir))
+         (tmp-db (make-temp-file "slack-cookies-" nil ".db"))
          (tmp-enc (make-temp-file "slack-cookie-" nil ".bin"))
          (tmp-dec (make-temp-file "slack-cookie-dec-" nil ".bin")))
     (unwind-protect
         (progn
+          ;; Copy the Cookies DB to avoid locking issues with the Slack app
+          (copy-file cookies-db tmp-db t)
+
           ;; Extract encrypted blob, strip v10 prefix (3 bytes)
           (shell-command-to-string
            (format "sqlite3 %s \"SELECT writefile('%s', substr(encrypted_value, 4)) FROM cookies WHERE name='d' LIMIT 1;\""
-                   (shell-quote-argument cookies-db) tmp-enc))
+                   (shell-quote-argument tmp-db) tmp-enc))
 
           (when (and (file-exists-p tmp-enc)
                      (> (file-attribute-size (file-attributes tmp-enc)) 0))
@@ -138,36 +170,10 @@ Returns the cookie value string or nil."
                 (when (string-prefix-p "xoxd-" raw)
                   raw)))))
       ;; Cleanup
+      (delete-file tmp-db)
       (delete-file tmp-enc)
       (when (file-exists-p tmp-dec)
         (delete-file tmp-dec)))))
-
-;;; Workspace identification
-
-(defun slacko-creds--identify-workspace (token cookie)
-  "Call auth.test to identify which workspace TOKEN belongs to.
-COOKIE is the decrypted `d' cookie.  Returns an alist with
-team, team_id, user, url or nil on failure."
-  (let* ((url-request-method "POST")
-         (url-request-extra-headers
-          `(("Authorization" . ,(format "Bearer %s" token))
-            ("Cookie" . ,(format "d=%s;" cookie))
-            ("Content-Type" . "application/json")))
-         (url-cookie-storage nil)
-         (url-cookie-secure-storage nil)
-         (buf (url-retrieve-synchronously "https://slack.com/api/auth.test" t nil 10)))
-    (when buf
-      (unwind-protect
-          (with-current-buffer buf
-            (goto-char (point-min))
-            (when (re-search-forward "^$" nil t)
-              (forward-line 1)
-              (let* ((json-object-type 'alist)
-                     (json-key-type 'symbol)
-                     (resp (ignore-errors (json-read))))
-                (when (eq (alist-get 'ok resp) t)
-                  resp))))
-        (kill-buffer buf)))))
 
 ;;; GPG file management
 
@@ -280,31 +286,27 @@ file contents are cached by mtime."
 ;;;###autoload
 (defun slacko-creds-refresh ()
   "Extract Slack credentials from the local app and cache them.
-Reads tokens from LevelDB, decrypts the session cookie, identifies
-workspaces via auth.test, and saves to the GPG credentials file."
+Discovers workspaces from IndexedDB, decrypts the session cookie,
+fetches API tokens from each workspace's HTML, and saves to the
+GPG credentials file."
   (interactive)
   (message "Extracting Slack credentials...")
-  (let ((tokens (slacko-creds--extract-tokens))
+  (let ((hosts (slacko-creds--discover-workspaces))
         (cookie (slacko-creds--decrypt-cookie))
         (entries '()))
-    (unless tokens
-      (error "No tokens found in Slack's LevelDB"))
+    (unless hosts
+      (error "No workspaces found. Is the Slack app running and logged in?"))
     (unless cookie
       (error "Could not decrypt the Slack session cookie"))
-    (message "Found %d token(s), cookie decrypted. Identifying workspaces..."
-             (length tokens))
-    (dolist (token tokens)
-      (let ((ws (slacko-creds--identify-workspace token cookie)))
-        (if ws
-            (let* ((url (alist-get 'url ws))
-                   ;; url is like "https://qlikdev.slack.com/"
-                   (host (and (string-match "https://\\([^/]+\\)" url)
-                              (match-string 1 url))))
+    (message "Found %d workspace(s), cookie decrypted. Fetching tokens..."
+             (length hosts))
+    (dolist (host hosts)
+      (let ((token (slacko-creds--extract-token-from-html host cookie)))
+        (if token
+            (progn
               (push (list host token cookie) entries)
-              (message "  ✓ %s (%s)" host (alist-get 'user ws)))
-          (message "  ✗ token %s...%s - invalid or expired"
-                   (substring token 0 15)
-                   (substring token -8)))))
+              (message "  ✓ %s" host))
+          (message "  ✗ %s - could not extract token" host))))
     (if entries
         (progn
           (slacko-creds--save-to-gpg entries)
