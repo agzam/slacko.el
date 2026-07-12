@@ -7,7 +7,7 @@
 ;; Created: February 19, 2025
 ;; Keywords: tools
 ;; Homepage: https://github.com/agzam/slacko
-;; Package-Requires: ((emacs "30.2") (emojify "1.0"))
+;; Package-Requires: ((emacs "30.1") (emojify "1.0"))
 ;;
 ;; This file is not part of GNU Emacs.
 ;;
