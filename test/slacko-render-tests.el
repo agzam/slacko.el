@@ -7,7 +7,7 @@
 ;; Created: February 19, 2026
 ;; Keywords: tools tests
 ;; Homepage: https://github.com/agzam/slacko
-;; Package-Requires: ((emacs "30.2"))
+;; Package-Requires: ((emacs "29.4"))
 ;;
 ;; This file is not part of GNU Emacs.
 ;;

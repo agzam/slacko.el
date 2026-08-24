@@ -9,7 +9,7 @@
 ;; Version: 1.3.0
 ;; Keywords: tools
 ;; Homepage: https://github.com/agzam/slacko
-;; Package-Requires: ((emacs "30.1"))
+;; Package-Requires: ((emacs "29.4"))
 ;;
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 ;;
