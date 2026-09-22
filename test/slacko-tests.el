@@ -232,6 +232,43 @@
       ;; Falls back to attachment text when main text is empty
       (expect (plist-get result :text) :to-equal "Original message"))))
 
+(describe "slacko--render-match"
+  (it "returns what the reactions filler needs for the message"
+    (with-temp-buffer
+      (spy-on 'slacko-render-resolve-user-mentions :and-call-fake
+              (lambda (_host text) text))
+      (spy-on 'slacko-render-resolve-channel-mentions :and-call-fake
+              (lambda (_host text) text))
+      (let ((registration
+             (slacko--render-match
+              `((username . "test")
+                (user . "U123")
+                (text . "hi")
+                (channel . ((id . "C456") (name . "general") (is_channel . t)))
+                (ts . "1738226435.123456")
+                (permalink . "https://workspace.slack.com/archives/C456/p123")))))
+        (expect (nth 0 registration) :to-equal "workspace.slack.com")
+        (expect (nth 1 registration) :to-equal "C456")
+        (expect (nth 2 registration) :to-equal "1738226435.123456")
+        (expect (marker-position (nth 3 registration)) :to-be-truthy)
+        (expect (buffer-string) :to-match "hi"))))
+
+  (it "returns nil for a message Slack says has no reactions"
+    (with-temp-buffer
+      (spy-on 'slacko-render-resolve-user-mentions :and-call-fake
+              (lambda (_host text) text))
+      (spy-on 'slacko-render-resolve-channel-mentions :and-call-fake
+              (lambda (_host text) text))
+      (expect (slacko--render-match
+               `((username . "test")
+                 (user . "U123")
+                 (text . "hi")
+                 (no_reactions . t)
+                 (channel . ((id . "C456") (name . "general") (is_channel . t)))
+                 (ts . "1738226435.123456")
+                 (permalink . "https://workspace.slack.com/archives/C456/p123")))
+              :to-be nil))))
+
 (describe "slacko--display-results"
   (it "handles successful response with matches"
     (let* ((slacko--current-host "workspace.slack.com")
@@ -249,8 +286,7 @@
                                               (pages . 1)))))
                        (query . "test"))))
       ;; Stub to avoid API calls
-      (spy-on 'slacko--enrich-matches-with-reactions :and-call-fake
-              (lambda (matches) matches))
+      (spy-on 'slacko-reactions-setup)
       (spy-on 'slacko-render-resolve-user-mentions :and-call-fake
               (lambda (_host text) text))
       (spy-on 'slacko-render-resolve-channel-mentions :and-call-fake
@@ -269,10 +305,40 @@
                                     (total . 0)
                                     (paging . ((page . 1)
                                               (pages . 1))))))))
+      (spy-on 'slacko-reactions-setup)
       (slacko--display-results response)
       (with-current-buffer slacko-search-buffer-name
         (let ((content (buffer-string)))
           (expect content :to-match "Total results: 0")))))
+
+  (it "leaves reactions to be filled in rather than fetching them"
+    (let* ((slacko--current-host "workspace.slack.com")
+           (response `((ok . t)
+                       (messages . ((matches . (((username . "test")
+                                                  (user . "U123")
+                                                  (text . "test message")
+                                                  (channel . ((id . "C456")
+                                                             (name . "general")
+                                                             (is_channel . t)))
+                                                  (ts . "1738226435.123456")
+                                                  (permalink . "https://workspace.slack.com/archives/C456/p123"))))
+                                    (total . 1)
+                                    (paging . ((page . 1) (pages . 1))))))))
+      (spy-on 'slacko-creds-api-request)
+      (spy-on 'slacko-creds-api-request-async)
+      (spy-on 'slacko-reactions-setup)
+      (spy-on 'slacko-render-resolve-user-mentions :and-call-fake
+              (lambda (_host text) text))
+      (spy-on 'slacko-render-resolve-channel-mentions :and-call-fake
+              (lambda (_host text) text))
+      (slacko--display-results response)
+      (expect 'slacko-creds-api-request :not :to-have-been-called)
+      (expect 'slacko-creds-api-request-async :not :to-have-been-called)
+      (expect 'slacko-reactions-setup :to-have-been-called)
+      (with-current-buffer slacko-search-buffer-name
+        (expect (length slacko-reactions--entries) :to-equal 1)
+        (expect (plist-get (car slacko-reactions--entries) :channel)
+                :to-equal "C456"))))
 
   (it "handles error response"
     (let* ((response `((ok . nil)
@@ -281,6 +347,63 @@
       (slacko--display-results response)
       (expect 'message :to-have-been-called-with
               "Slack search failed: %s" "invalid_auth"))))
+
+(describe "slacko-search"
+  (it "runs a Consult session when Consult is installed"
+    (spy-on 'slacko--consult-available-p :and-return-value t)
+    (spy-on 'slacko-consult-search)
+    (spy-on 'slacko--search-buffer)
+    (spy-on 'read-string)
+    (slacko-search nil "team.slack.com")
+    (expect 'slacko-consult-search :to-have-been-called-with nil "team.slack.com")
+    (expect 'slacko--search-buffer :not :to-have-been-called)
+    (expect 'read-string :not :to-have-been-called))
+
+  (it "asks for the query and fills a buffer without Consult"
+    (spy-on 'slacko--consult-available-p :and-return-value nil)
+    (spy-on 'slacko--search-buffer)
+    (spy-on 'read-string :and-return-value "budget")
+    (slacko-search nil "team.slack.com")
+    (expect 'read-string :to-have-been-called)
+    (expect 'slacko--search-buffer :to-have-been-called-with
+            "budget" "team.slack.com"))
+
+  (it "keeps taking a query from lisp callers"
+    (spy-on 'slacko--consult-available-p :and-return-value nil)
+    (spy-on 'slacko--search-buffer)
+    (spy-on 'read-string)
+    (slacko-search "budget" "team.slack.com")
+    (expect 'read-string :not :to-have-been-called)
+    (expect 'slacko--search-buffer :to-have-been-called-with
+            "budget" "team.slack.com"))
+
+  (it "asks which workspace to search only with a prefix argument"
+    (spy-on 'slacko--prompt-host :and-return-value "chosen.slack.com")
+    (spy-on 'slacko--consult-available-p :and-return-value t)
+    (spy-on 'slacko-consult-search)
+    (let ((current-prefix-arg '(4)))
+      (call-interactively #'slacko-search))
+    (expect 'slacko-consult-search :to-have-been-called-with
+            nil "chosen.slack.com")
+    (spy-on 'slacko--prompt-host)
+    (call-interactively #'slacko-search)
+    (expect 'slacko--prompt-host :not :to-have-been-called)))
+
+(describe "slacko--search-buffer"
+  (it "requests the first page and displays what comes back"
+    (spy-on 'slacko--make-request :and-return-value '((ok . t)))
+    (spy-on 'slacko--display-results)
+    (slacko--search-buffer "budget" "team.slack.com")
+    (expect 'slacko--make-request :to-have-been-called-with "budget" 1)
+    (expect 'slacko--display-results :to-have-been-called-with '((ok . t)) nil)
+    (expect slacko--current-host :to-equal "team.slack.com")
+    (expect slacko--current-query :to-equal "budget"))
+
+  (it "displays nothing when the request failed"
+    (spy-on 'slacko--make-request :and-return-value nil)
+    (spy-on 'slacko--display-results)
+    (slacko--search-buffer "budget")
+    (expect 'slacko--display-results :not :to-have-been-called)))
 
 (describe "slacko--available-hosts"
   (it "returns hosts from auth-source"
