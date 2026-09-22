@@ -34,8 +34,8 @@ This package solves that problem by bringing Slack search into Emacs, where you 
 
 The package automatically handles:
 - Different conversation types (channels, DMs, group DMs, private channels)
-- Pagination (loads more results automatically as you scroll)
 - Slack's custom mrkdwn format conversion to org-mode
+- Reactions, which Slack leaves out of search results and only hands over one request per message: they are fetched for what the window shows plus a few screenfuls below it, so results appear at once and reactions catch up as you scroll
 
 * How?
 
@@ -109,6 +109,48 @@ M-x slacko-search
 #+end_src
 
 I'm in the process of adding more functionality, I just added a way for displaying messages and threads.
+
+** Searching with Consult
+
+With [[https://github.com/minad/consult][Consult]] installed, ~slacko-search~ runs the search as a Consult session: results arrive while you type, one candidate per message showing who said it, where, when and what it says. Without Consult the command works exactly as before - Consult is not a dependency of this package, and nothing here installs it.
+
+Inside the session:
+
+- =RET= opens the thread the message belongs to, in a ~slacko-thread-mode~ buffer named after the conversation - =*Slack Thread: #releases*=, =*Slack Thread: @natalie.see*=.  Each thread gets its own buffer, so you can pick several out of one search; opening the same one again refreshes it where it is
+- your ~consult-preview-key~ renders the candidate under point in a ~slacko-search-mode~ buffer, without asking Slack for anything
+- the whole input goes to Slack, so its search operators work: ~in:#channel~, ~from:@someone~, ~before:2026-01-01~
+- =#query#filter= narrows the results already fetched, Consult's usual splitting syntax, matching the full text of a message and not only the part shown on the line
+- =C-u M-x slacko-search= asks which workspace to search first
+
+Slack returns at most 100 messages per request, and the session follows up to ~slacko-consult-max-pages~ of them:
+
+#+begin_src emacs-lisp
+(setq slacko-consult-max-pages 3)     ; pages fetched per query
+(setq slacko-consult-page-size 100)   ; messages per page, 100 is Slack's cap
+(setq slacko-consult-text-lines 2)    ; message lines under a candidate, 0 for none
+(setq slacko-consult-text-width 110)  ; width those lines are filled to
+#+end_src
+
+*** Embark actions
+
+With [[https://github.com/oantolin/embark][Embark]] installed, ~embark-act~ on a result offers:
+
+| =RET= | open the thread                                   |
+| =o=   | show the message in a ~slacko-search-mode~ buffer |
+| =s=   | open the message in the Slack app                 |
+| =w=   | copy the message link                             |
+| =W=   | copy the message text                             |
+
+~embark-export~ renders every result of the session into a ~slacko-search-mode~ buffer, the same org outline the plain ~slacko-search~ produces.
+
+** Reactions
+
+Slack's search API does not return reactions, and fetching them costs one request per message. They are filled in behind your reading instead: whatever the window shows plus ~slacko-reactions-lookahead~ screenfuls below it gets asked for, at most ~slacko-reactions-max-requests~ at a time.
+
+#+begin_src emacs-lisp
+(setq slacko-reactions-lookahead 2)     ; screenfuls fetched ahead of the scrolling
+(setq slacko-reactions-max-requests 6)  ; requests in flight at once
+#+end_src
 
 ** Optional: Customize browser tab behavior
 

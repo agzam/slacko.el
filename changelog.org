@@ -3,6 +3,25 @@
 
 All notable changes to this project will be documented in this file.
 
+* [1.4.0] - 2026-09-22
+** Added
+- Consult session for searching: with ~consult~ installed, ~slacko-search~ runs the search in the minibuffer, results arriving while the query is typed.  Candidates carry the message itself, so the preview and every action work off what the search already returned
+- ~RET~ on a result opens its thread; the candidate under point renders in a ~slacko-search-mode~ buffer when ~consult-preview-key~ says so, without a single request
+- Embark actions for a result - open the thread, show the message in a ~slacko-search-mode~ buffer, open it in the Slack app, copy its link, copy its text - and ~embark-export~ rendering the whole result set into the org outline ~slacko-search~ has always produced
+- Direct messages are labelled with the name of the person they are with, and group ones with their members, instead of the user id Slack names those conversations after.  A message the other party wrote names the conversation for free; the rest cost one ~users.info~ request per person per session
+- ~slacko-reactions.el~: reactions are fetched for what the window shows plus a lookahead, a few requests at a time, rather than one blocking request per message before anything appears
+- ~slacko-creds-api-request-async~ alongside the synchronous request function
+
+** Changed
+- A captured thread is titled and its buffer named after the conversation it came from - ~*Slack Thread: #releases*~, ~*Slack Thread: @natalie.see*~ - instead of the bare ~Slack Thread~.  Opening one from a search result costs nothing extra: the result already describes its conversation
+- Every thread gets a buffer of its own, so several picked out of one set of search results stay open side by side.  A thread opened again is refreshed where it is rather than duplicated
+- ~slacko-search~ takes an optional QUERY and routes to the Consult session where Consult is installed.  Consult and Embark stay optional: neither is a package dependency, and without them the command reads a query and fills an org buffer exactly as before
+- Search results are displayed before their reactions are known, which is what used to hold a search up for one request per message
+- The Makefile runs every Emacs against a repo-local sandbox, so a test run cannot write into the developer's own ~~/.emacs.d~
+
+** Fixed
+- Non-ASCII text in API responses arrived mangled: ~url~ hands the body back undecoded, and it is decoded as UTF-8 now
+
 * [1.3.0] - 2026-07-02
 ** Fixed
 - HTML entities in messages (~&amp;~, ~&lt;~, ~&gt;~) now decode to their literal characters instead of rendering raw; decoding runs as the last mrkdwn->org step so blockquotes, links, and double-encoded entities (~&amp;gt;~) stay correct
