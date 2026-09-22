@@ -34,9 +34,14 @@ Undecoded bytes in a unibyte buffer, headers separated by CRLF."
             :to-equal "https://slack.com/api/search.messages?query=hello&page=1"))
 
   (it "escapes parameter values"
-    (expect (slacko-creds--api-url "search.messages" '((query "in:#dev a b")))
-            :to-equal
-            "https://slack.com/api/search.messages?query=in:%23dev%20a%20b")))
+    ;; which characters `url-hexify-string' spares differs between Emacs
+    ;; versions, so the escaping is checked by what it means, not by how
+    ;; it is spelled
+    (let* ((url (slacko-creds--api-url "search.messages" '((query "in:#dev a b"))))
+           (query (cadr (split-string url "[?]"))))
+      (expect (string-match-p "[ #]" query) :to-be nil)
+      (expect (url-unhex-string (cadr (split-string query "=")))
+              :to-equal "in:#dev a b"))))
 
 (describe "slacko-creds--auth-headers"
   (it "carries the token and the session cookie"
