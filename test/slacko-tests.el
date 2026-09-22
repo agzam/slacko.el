@@ -1,12 +1,12 @@
 ;;; slacko-tests.el --- tests for slacko -*- lexical-binding: t; -*-
 ;;
-;; Copyright (C) 2025 Ag Ibragimov
+;; Copyright (C) 2025-2026 Ag Ibragimov
 ;;
 ;; Author: Ag Ibragimov <agzam.ibragimov@gmail.com>
 ;; Maintainer: Ag Ibragimov <agzam.ibragimov@gmail.com>
 ;; Created: October 19, 2025
 ;; Keywords: tools tests
-;; Homepage: https://github.com/agzam/slacko
+;; Homepage: https://github.com/agzam/slacko.el
 ;; Package-Requires: ((emacs "29.4"))
 ;;
 ;; This file is not part of GNU Emacs.
@@ -464,6 +464,18 @@
     (let ((slacko-default-host nil))
       (spy-on 'slacko--available-hosts :and-return-value nil)
       (expect (slacko--default-host) :to-throw 'error))))
+
+(describe "slacko-search-mode-map"
+  (it "follows the link at point with RET"
+    (expect (lookup-key slacko-search-mode-map (kbd "RET"))
+            :to-be #'org-open-at-point))
+
+  (it "forces the Slack app with C-c C-o"
+    (expect (lookup-key slacko-search-mode-map (kbd "C-c C-o"))
+            :to-be #'slacko-open-in-slack))
+
+  (it "binds no C-c LETTER, which is reserved for users"
+    (expect (lookup-key slacko-search-mode-map (kbd "C-c o")) :to-be nil)))
 
 ;; Local Variables:
 ;; package-lint-main-file: "slacko.el"

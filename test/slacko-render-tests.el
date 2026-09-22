@@ -1,12 +1,12 @@
 ;;; slacko-render-tests.el --- tests for slacko-render -*- lexical-binding: t; -*-
 ;;
-;; Copyright (C) 2025 Ag Ibragimov
+;; Copyright (C) 2025-2026 Ag Ibragimov
 ;;
 ;; Author: Ag Ibragimov <agzam.ibragimov@gmail.com>
 ;; Maintainer: Ag Ibragimov <agzam.ibragimov@gmail.com>
 ;; Created: February 19, 2026
 ;; Keywords: tools tests
-;; Homepage: https://github.com/agzam/slacko
+;; Homepage: https://github.com/agzam/slacko.el
 ;; Package-Requires: ((emacs "29.4"))
 ;;
 ;; This file is not part of GNU Emacs.
@@ -19,6 +19,15 @@
 
 (require 'buttercup)
 (require 'slacko-render)
+
+;;; Buffer state
+
+(describe "slacko-render-host"
+  (it "survives the major-mode change that sets the buffer up"
+    (with-temp-buffer
+      (setq slacko-render-host "foo.slack.com")
+      (kill-all-local-variables)
+      (expect slacko-render-host :to-equal "foo.slack.com"))))
 
 ;;; Timestamp
 

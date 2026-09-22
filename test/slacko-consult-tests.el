@@ -1,11 +1,11 @@
 ;;; slacko-consult-tests.el --- tests for slacko-consult -*- lexical-binding: t; -*-
 ;;
-;; Copyright (C) 2025 Ag Ibragimov
+;; Copyright (C) 2025-2026 Ag Ibragimov
 ;;
 ;; Author: Ag Ibragimov <agzam.ibragimov@gmail.com>
 ;; Maintainer: Ag Ibragimov <agzam.ibragimov@gmail.com>
 ;; Keywords: tools tests
-;; Homepage: https://github.com/agzam/slacko
+;; Homepage: https://github.com/agzam/slacko.el
 ;;
 ;; This file is not part of GNU Emacs.
 ;;
@@ -527,6 +527,37 @@ USERNAME is what Slack calls the author."
     (spy-on 'slacko-thread-capture)
     (slacko-consult-open-thread "plain")
     (expect 'slacko-thread-capture :not :to-have-been-called)))
+
+(defun slacko-consult-tests--reload ()
+  "Load the source of `slacko-consult', never a .elc that may predate an edit."
+  (load (locate-library "slacko-consult.el" t) nil t))
+
+(describe "loading slacko-consult"
+  (it "touches nothing of Embark's when Embark is loaded already"
+    (assume (require 'embark nil t) "Embark is not installed")
+    (let ((embark-keymap-alist nil)
+          (embark-exporters-alist nil)
+          (embark-default-action-overrides nil))
+      (slacko-consult-tests--reload)
+      (expect embark-keymap-alist :to-be nil)
+      (expect embark-exporters-alist :to-be nil)
+      (expect embark-default-action-overrides :to-be nil)))
+
+  (it "queues nothing against a later Embark load"
+    ;; `with-eval-after-load' pushes onto `after-load-alist' whether or
+    ;; not the feature is loaded, so this catches the registration in
+    ;; either order
+    (let ((after-load-alist (copy-alist after-load-alist)))
+      (slacko-consult-tests--reload)
+      (expect (assq 'embark after-load-alist) :to-be nil))))
+
+(describe "starting a session"
+  (it "is what registers the category with Embark"
+    (spy-on 'slacko-consult--embark-setup)
+    (spy-on 'consult--read)
+    (spy-on 'slacko--default-host :and-return-value "team.slack.com")
+    (slacko-consult--search)
+    (expect 'slacko-consult--embark-setup :to-have-been-called)))
 
 (describe "slacko-consult--embark-setup"
   (it "registers the category, its actions and its exporter"

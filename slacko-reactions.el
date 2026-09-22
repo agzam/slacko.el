@@ -1,13 +1,13 @@
 ;;; slacko-reactions.el --- Fill in reactions while you read -*- lexical-binding: t; -*-
 ;;
-;; Copyright (C) 2025 Ag Ibragimov
+;; Copyright (C) 2025-2026 Ag Ibragimov
 ;;
 ;; Author: Ag Ibragimov <agzam.ibragimov@gmail.com>
+;; Assisted-by: Claude:claude-opus-5
 ;; Maintainer: Ag Ibragimov <agzam.ibragimov@gmail.com>
 ;; Created: September 22, 2026
-;; Version: 0.0.1
-;; Keywords: tools
-;; Homepage: https://github.com/agzam/slacko
+;; Keywords: comm tools
+;; Homepage: https://github.com/agzam/slacko.el
 ;;
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 ;;
@@ -206,7 +206,9 @@ them keeps its text where the reader last saw it."
             (slacko-render--insert-reactions reactions)))))))
 
 (provide 'slacko-reactions)
+
 ;; Local Variables:
 ;; package-lint-main-file: "slacko.el"
 ;; End:
+
 ;;; slacko-reactions.el ends here

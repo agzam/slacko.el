@@ -1,13 +1,13 @@
 ;;; slacko-thread.el --- Capture Slack threads -*- lexical-binding: t; -*-
 ;;
-;; Copyright (C) 2025 Ag Ibragimov
+;; Copyright (C) 2025-2026 Ag Ibragimov
 ;;
 ;; Author: Ag Ibragimov <agzam.ibragimov@gmail.com>
+;; Assisted-by: Claude:claude-opus-5
 ;; Maintainer: Ag Ibragimov <agzam.ibragimov@gmail.com>
 ;; Created: February 17, 2026
-;; Version: 0.0.1
-;; Keywords: tools
-;; Homepage: https://github.com/agzam/slacko
+;; Keywords: comm tools
+;; Homepage: https://github.com/agzam/slacko.el
 ;;
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 ;;
@@ -20,23 +20,21 @@
 ;;
 ;;; Code:
 
-(require 'url)
-(require 'json)
 (require 'org)
+(require 'rx)
 (require 'seq)
+(require 'thingatpt)
 (require 'slacko-creds)
 (require 'slacko-render)
 
-(declare-function slacko-open-in-slack "slacko" nil)
-
-(defvar slacko-emoji--buffer-host) ; forward declaration from slacko-emoji.el
-(declare-function slacko-emoji--maybe-enable "slacko-emoji")
+;; `slacko' requires this file, so it can only be declared here
+(declare-function slacko-open-in-slack "slacko")
 
 ;;; Customizable Variables
 
 (defgroup slacko-thread nil
   "Fetch and display Slack threads."
-  :group 'tools
+  :group 'slacko
   :prefix "slacko-thread-")
 
 (defcustom slacko-thread-buffer-name "*Slack Thread*"
@@ -73,7 +71,7 @@ Returns a plist (:workspace :channel-id :ts :thread-ts) or nil."
 
 (defun slacko-thread--detect-url ()
   "Detect a Slack URL from context.
-Checks: thing-at-point, then latest kill-ring entry."
+Checks `thing-at-point' first, then the latest `kill-ring' entry."
   (or (when-let* ((url (thing-at-point 'url t)))
         (when (string-match-p slacko-thread--url-regexp url)
           url))
@@ -84,9 +82,8 @@ Checks: thing-at-point, then latest kill-ring entry."
 ;;; API Requests
 
 (defun slacko-thread--fetch-thread (host channel-id ts)
-  "Fetch a thread from Slack.
-Uses conversations.replies with TS as the thread parent.
-Returns the list of messages or nil."
+  "Fetch the thread TS started in CHANNEL-ID on workspace HOST.
+Uses conversations.replies.  Returns the list of messages or nil."
   (let* ((resp (slacko-creds-api-request
                 host "conversations.replies"
                 `((channel ,channel-id)
@@ -98,9 +95,8 @@ Returns the list of messages or nil."
       nil)))
 
 (defun slacko-thread--fetch-single-message (host channel-id ts)
-  "Fetch a single message from Slack.
-Uses conversations.history with TS.
-Returns a list containing the single message or nil."
+  "Fetch the message TS in CHANNEL-ID on workspace HOST.
+Uses conversations.history.  Returns a one-element list or nil."
   (let* ((resp (slacko-creds-api-request
                 host "conversations.history"
                 `((channel ,channel-id)
@@ -168,11 +164,9 @@ search results leaves them all open."
   (or (slacko-thread--find-buffer id)
       (generate-new-buffer (slacko-thread--buffer-name label))))
 
-(defun slacko-thread--display (messages host workspace channel-id url)
+(defun slacko-thread--display (messages host channel-id url)
   "Display MESSAGES in an org buffer.
-HOST is the full domain.  WORKSPACE is the short name.
-CHANNEL-ID and URL are for context."
-  (ignore workspace) ; kept in signature for callers; host suffices
+HOST is the workspace domain.  CHANNEL-ID and URL are for context."
   (let* ((label (or (slacko-render-conversation-label
                      host (slacko-render-channel host channel-id))
                     channel-id))
@@ -185,7 +179,7 @@ CHANNEL-ID and URL are for context."
         (erase-buffer)
         (insert (format "#+TITLE: %s\n" label))
         (insert (format "#+SOURCE: %s\n" url))
-        (insert (format "#+DATE: %s\n\n" (format-time-string "%Y-%m-%d %H:%M:%S")))
+        (insert (format "#+DATE: %s\n\n" (format-time-string "%F %T")))
         ;; Parent message
         (slacko-render-message
          (slacko-thread--normalize-message parent host channel-id 1))
@@ -193,10 +187,10 @@ CHANNEL-ID and URL are for context."
         (dolist (reply replies)
           (slacko-render-message
            (slacko-thread--normalize-message reply host channel-id 2))))
-      ;; Set host for workspace emoji resolution before enabling
-      ;; the mode, so slacko-emoji-mode can fetch custom emojis
-      (setq slacko-emoji--buffer-host host)
-      (unless (eq major-mode 'slacko-thread-mode)
+      ;; before the major mode, so `slacko-emoji-mode' knows whose
+      ;; custom emojis to fetch when it turns itself on
+      (setq slacko-render-host host)
+      (unless (derived-mode-p 'slacko-thread-mode)
         (slacko-thread-mode))
       ;; after the major mode, which wipes buffer-local state
       (setq slacko-thread--id id)
@@ -208,7 +202,10 @@ CHANNEL-ID and URL are for context."
 (defvar slacko-thread-mode-map
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map org-mode-map)
-    (define-key map (kbd "C-c o") #'slacko-open-in-slack)
+    ;; the buffer is read-only, so RET is free to take over the job
+    ;; `C-c C-o' does in org, which this mode needs the key for
+    (define-key map (kbd "RET") #'org-open-at-point)
+    (define-key map (kbd "C-c C-o") #'slacko-open-in-slack)
     map)
   "Keymap for `slacko-thread-mode'.")
 
@@ -218,11 +215,7 @@ Derived from `org-mode'.
 \\{slacko-thread-mode-map}"
   (setq buffer-read-only t)
   (slacko-render-setup-font-lock)
-  ;; emojify checked first: slacko-emoji hard-requires it, and a bare
-  ;; NOERROR require would still signal from that inner require.
-  (when (and (require 'emojify nil t)
-             (require 'slacko-emoji nil t))
-    (slacko-emoji--maybe-enable)))
+  (slacko-render-setup-emoji))
 
 ;;; Interactive Commands
 
@@ -254,11 +247,11 @@ If it's a standalone message, just that message is shown."
     (message "Fetching thread from %s..." host)
     (let ((messages (slacko-thread--fetch-thread host channel-id parent-ts)))
       (if messages
-          (slacko-thread--display messages host workspace channel-id url)
+          (slacko-thread--display messages host channel-id url)
         ;; Fallback: try as single message
         (let ((single (slacko-thread--fetch-single-message host channel-id ts)))
           (if single
-              (slacko-thread--display single host workspace channel-id url)
+              (slacko-thread--display single host channel-id url)
             (user-error "Could not fetch message from %s" url)))))))
 
 (provide 'slacko-thread)

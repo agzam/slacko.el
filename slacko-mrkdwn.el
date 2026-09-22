@@ -1,24 +1,25 @@
 ;;; slacko-mrkdwn.el --- Convert Slack mrkdwn to org-mode -*- lexical-binding: t; -*-
 ;;
-;; Copyright (C) 2025 Ag Ibragimov
+;; Copyright (C) 2025-2026 Ag Ibragimov
 ;;
 ;; Author: Ag Ibragimov <agzam.ibragimov@gmail.com>
+;; Assisted-by: Claude:claude-opus-5
 ;; Maintainer: Ag Ibragimov <agzam.ibragimov@gmail.com>
 ;; Created: October 19, 2025
-;; Modified: October 19, 2025
-;; Version: 0.0.1
-;; Keywords: tools
-;; Homepage: https://github.com/agzam/slacko
+;; Keywords: comm tools
+;; Homepage: https://github.com/agzam/slacko.el
 ;;
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 ;;
 ;; This file is not part of GNU Emacs.
 ;;
 ;;; Commentary:
-;;  Convert Slack's mrkdwn format to org-mode markup.
-;;  
-;;  Slack uses a variant of markdown called "mrkdwn" which has some
-;;  non-standard syntax like <url|text> for links and <@USER_ID> for mentions.
+;;
+;; Convert Slack's mrkdwn format to `org-mode' markup.
+;;
+;; Slack uses a variant of markdown called "mrkdwn" which has some
+;; non-standard syntax like <url|text> for links and <@USER_ID> for
+;; mentions.
 ;;
 ;;; Code:
 
@@ -32,7 +33,7 @@
     (((class color) (background dark))
      :foreground "gray60" :slant italic :extend t))
   "Face for blockquoted text in Slack messages."
-  :group 'slacko-search)
+  :group 'slacko)
 
 (defface slacko-mrkdwn-blockquote-bar-face
   '((((class color) (background light))
@@ -40,7 +41,7 @@
     (((class color) (background dark))
      :foreground "gray40"))
   "Face for the │ bar character in blockquotes."
-  :group 'slacko-search)
+  :group 'slacko)
 
 ;;; Font-lock
 
@@ -103,7 +104,7 @@ Converts both <url|text> and bare <url> formats."
     ;; Convert <url|text> to [[url][text]]
     (while (re-search-forward "<\\([^|>]+\\)|\\([^>]+\\)>" nil t)
       (replace-match "[[\\1][\\2]]" t))
-    
+
     (goto-char (point-min))
     ;; Convert bare <url> to [[url]]
     (while (re-search-forward "<\\(https?://[^>]+\\)>" nil t)
@@ -120,7 +121,7 @@ Converts both <url|text> and bare <url> formats."
     (buffer-string)))
 
 (defun slacko-mrkdwn--convert-blockquotes (text)
-  "Convert Slack blockquotes to org-mode quote lines in TEXT.
+  "Convert Slack blockquotes to `org-mode' quote lines in TEXT.
 Slack uses `&gt;' (HTML-encoded `>') at the start of a line for quotes.
 Converts to `│' prefix for a lightweight visual quote indicator."
   (replace-regexp-in-string
@@ -157,7 +158,7 @@ Not yet implemented:
     (let* ((protected-blocks '())
            (counter 0)
            (text-with-placeholders text))
-      
+
       ;; First, extract and protect code blocks with placeholders
       (setq text-with-placeholders
             (replace-regexp-in-string
@@ -168,7 +169,7 @@ Not yet implemented:
                  (setq counter (1+ counter))
                  placeholder))
              text-with-placeholders))
-      
+
       ;; Process links (now code blocks are protected)
       (setq text-with-placeholders (slacko-mrkdwn--convert-links text-with-placeholders))
 
@@ -177,7 +178,7 @@ Not yet implemented:
 
       ;; Convert strikethrough ~text~ -> +text+ (before inline code, which also uses ~)
       (setq text-with-placeholders (slacko-mrkdwn--convert-strikethrough text-with-placeholders))
-      
+
       ;; Restore and convert code blocks
       (dolist (pair protected-blocks)
         (setq text-with-placeholders
@@ -186,7 +187,7 @@ Not yet implemented:
                (slacko-mrkdwn--convert-code-blocks (cdr pair))
                text-with-placeholders
                t t)))
-      
+
       ;; Convert inline code, then decode HTML entities last: they are
       ;; transport encoding, so they must decode even inside code blocks,
       ;; and blockquote conversion above consumed the literal "&gt; " lines.
@@ -194,7 +195,9 @@ Not yet implemented:
        (slacko-mrkdwn--convert-inline-code text-with-placeholders)))))
 
 (provide 'slacko-mrkdwn)
+
 ;; Local Variables:
 ;; package-lint-main-file: "slacko.el"
 ;; End:
+
 ;;; slacko-mrkdwn.el ends here

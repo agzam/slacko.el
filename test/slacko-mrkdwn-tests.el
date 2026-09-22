@@ -1,12 +1,12 @@
 ;;; slacko-mrkdwn-tests.el --- tests for slacko-mrkdwn.el -*- lexical-binding: t; -*-
 ;;
-;; Copyright (C) 2025 Ag Ibragimov
+;; Copyright (C) 2025-2026 Ag Ibragimov
 ;;
 ;; Author: Ag Ibragimov <agzam.ibragimov@gmail.com>
 ;; Maintainer: Ag Ibragimov <agzam.ibragimov@gmail.com>
 ;; Created: October 19, 2025
 ;; Keywords: tools tests
-;; Homepage: https://github.com/agzam/slacko
+;; Homepage: https://github.com/agzam/slacko.el
 ;; Package-Requires: ((emacs "29.4"))
 ;;
 ;; SPDX-License-Identifier: GPL-3.0-or-later

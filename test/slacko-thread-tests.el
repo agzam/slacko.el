@@ -1,11 +1,11 @@
 ;;; slacko-thread-tests.el --- tests for slacko-thread -*- lexical-binding: t; -*-
 ;;
-;; Copyright (C) 2025 Ag Ibragimov
+;; Copyright (C) 2025-2026 Ag Ibragimov
 ;;
 ;; Author: Ag Ibragimov <agzam.ibragimov@gmail.com>
 ;; Maintainer: Ag Ibragimov <agzam.ibragimov@gmail.com>
 ;; Keywords: tools tests
-;; Homepage: https://github.com/agzam/slacko
+;; Homepage: https://github.com/agzam/slacko.el
 ;;
 ;; This file is not part of GNU Emacs.
 ;;
@@ -102,7 +102,7 @@
           (progn
             (slacko-thread--display
              (list '((user . "U1") (ts . "1738226435.123456") (text . "hi")))
-             "team.slack.com" "team" "C456"
+             "team.slack.com" "C456"
              "https://team.slack.com/archives/C456/p1738226435123456")
             (setq buffer (car (spy-calls-args-for 'switch-to-buffer 0)))
             (with-current-buffer buffer
@@ -120,7 +120,7 @@
           (progn
             (slacko-thread--display
              (list '((user . "U1") (ts . "1738226435.123456") (text . "hi")))
-             "team.slack.com" "team" "C456"
+             "team.slack.com" "C456"
              "https://team.slack.com/archives/C456/p1738226435123456")
             (setq buffer (car (spy-calls-args-for 'switch-to-buffer 0)))
             (expect (buffer-name buffer) :to-equal "*Slack Thread: C456*"))
@@ -134,12 +134,12 @@
           (progn
             (slacko-thread--display
              (list '((user . "U1") (ts . "1738226435.123456") (text . "hi")))
-             "team.slack.com" "team" "C456"
+             "team.slack.com" "C456"
              "https://team.slack.com/archives/C456/p1738226435123456")
             (setq buffer (car (spy-calls-args-for 'switch-to-buffer 0)))
             (slacko-thread--display
              (list '((user . "U1") (ts . "1738226435.123456") (text . "hi again")))
-             "team.slack.com" "team" "C456"
+             "team.slack.com" "C456"
              "https://team.slack.com/archives/C456/p1738226435123456")
             (expect (car (spy-calls-args-for 'switch-to-buffer 1)) :to-be buffer)
             (with-current-buffer buffer
@@ -154,11 +154,11 @@
           (progn
             (slacko-thread--display
              (list '((user . "U1") (ts . "1738226435.123456") (text . "one")))
-             "team.slack.com" "team" "C456"
+             "team.slack.com" "C456"
              "https://team.slack.com/archives/C456/p1738226435123456")
             (slacko-thread--display
              (list '((user . "U1") (ts . "1738300000.000100") (text . "two")))
-             "team.slack.com" "team" "C456"
+             "team.slack.com" "C456"
              "https://team.slack.com/archives/C456/p1738300000000100")
             (setq buffers (list (car (spy-calls-args-for 'switch-to-buffer 0))
                                 (car (spy-calls-args-for 'switch-to-buffer 1))))
@@ -168,6 +168,18 @@
             (expect (with-current-buffer (nth 1 buffers) (buffer-string))
                     :to-match "two"))
         (mapc #'kill-buffer (seq-filter #'buffer-live-p buffers))))))
+
+(describe "slacko-thread-mode-map"
+  (it "follows the link at point with RET"
+    (expect (lookup-key slacko-thread-mode-map (kbd "RET"))
+            :to-be #'org-open-at-point))
+
+  (it "forces the Slack app with C-c C-o"
+    (expect (lookup-key slacko-thread-mode-map (kbd "C-c C-o"))
+            :to-be #'slacko-open-in-slack))
+
+  (it "binds no C-c LETTER, which is reserved for users"
+    (expect (lookup-key slacko-thread-mode-map (kbd "C-c o")) :to-be nil)))
 
 ;; Local Variables:
 ;; package-lint-main-file: "slacko.el"

@@ -1,13 +1,13 @@
 ;;; slacko-creds.el --- Extract Slack credentials from local app data -*- lexical-binding: t; -*-
 ;;
-;; Copyright (C) 2025 Ag Ibragimov
+;; Copyright (C) 2025-2026 Ag Ibragimov
 ;;
 ;; Author: Ag Ibragimov <agzam.ibragimov@gmail.com>
+;; Assisted-by: Claude:claude-opus-5
 ;; Maintainer: Ag Ibragimov <agzam.ibragimov@gmail.com>
 ;; Created: February 17, 2026
-;; Version: 0.0.1
-;; Keywords: tools
-;; Homepage: https://github.com/agzam/slacko
+;; Keywords: comm tools
+;; Homepage: https://github.com/agzam/slacko.el
 ;;
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 ;;
@@ -38,7 +38,7 @@
 
 (defgroup slacko-creds nil
   "Slack credential extraction and caching."
-  :group 'tools
+  :group 'slacko
   :prefix "slacko-creds-")
 
 (defcustom slacko-creds-gpg-file
@@ -73,7 +73,7 @@ Uses `slacko-creds-gpg-key' if set, otherwise auto-detects."
                      (shell-command-to-string
                       "gpg --list-secret-keys --keyid-format long 2>/dev/null | grep '^sec' | head -1 | sed 's|.*/\\([A-F0-9]*\\) .*|\\1|'"))))
         (if (string-empty-p output)
-            (error "No GPG secret key found. Set `slacko-creds-gpg-key'")
+            (user-error "No GPG secret key found.  Set `slacko-creds-gpg-key'")
           output))))
 
 ;;; Workspace discovery
@@ -232,7 +232,7 @@ ENTRIES is a list of (host token cookie) triples."
                     "--output" (expand-file-name slacko-creds-gpg-file)
                     "--encrypt" tmp)))
               (unless (zerop exit-code)
-                (error "gpg encrypt failed (exit %d)" exit-code))))
+                (error "GPG encryption failed (exit %d)" exit-code))))
         (when (file-exists-p tmp)
           (delete-file tmp))))
     (message "Slack credentials saved to %s" slacko-creds-gpg-file)))
@@ -248,9 +248,9 @@ ENTRIES is a list of (host token cookie) triples."
 
 (defun slacko-creds--clear-cache ()
   "Clear auth-source caches for Slack credentials.
-Clears both the password-cache (`password-data') where auth-source
-stores search results, and `auth-source-netrc-cache' where parsed
-file contents are cached by mtime."
+Clears both `password-data', where auth-source stores search results,
+and `auth-source-netrc-cache', where parsed file contents are cached
+by mtime."
   ;; 1. Clear search-result cache in password-data.
   ;;    Keys are cons cells: (auth-source . (:host HOST :user KIND ...))
   (when (and (boundp 'password-data)
@@ -295,9 +295,9 @@ GPG credentials file."
         (cookie (slacko-creds--decrypt-cookie))
         (entries '()))
     (unless hosts
-      (error "No workspaces found. Is the Slack app running and logged in?"))
+      (user-error "No workspaces found.  Is the Slack app running and logged in?"))
     (unless cookie
-      (error "Could not decrypt the Slack session cookie"))
+      (user-error "Could not decrypt the Slack session cookie"))
     (message "Found %d workspace(s), cookie decrypted. Fetching tokens..."
              (length hosts))
     (dolist (host hosts)
@@ -425,7 +425,9 @@ wants the response can kill."
      nil t t)))
 
 (provide 'slacko-creds)
+
 ;; Local Variables:
 ;; package-lint-main-file: "slacko.el"
 ;; End:
+
 ;;; slacko-creds.el ends here
