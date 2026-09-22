@@ -30,6 +30,7 @@
 (require 'emojify)
 (require 'url)
 (require 'url-vars)
+(require 'slacko-creds)
 
 (defgroup slacko-emoji nil
   "Emoji rendering for slacko buffers."

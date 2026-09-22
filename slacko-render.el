@@ -55,9 +55,33 @@ See `format-time-string' for available format specifiers."
 (defvar slacko-render--user-cache (make-hash-table :test 'equal)
   "Cache of user-id -> display-name, keyed as \"host:user-id\".")
 
+(defvar slacko-render-resolve-mentions t
+  "Whether an unknown mention may be looked up over the network.
+Bound to nil where a render must not block, such as a preview: names
+already cached still resolve, the rest stay as their raw ids.")
+
 (defun slacko-render--non-empty (s)
   "Return S if it is a non-empty string, otherwise nil."
   (when (and (stringp s) (not (string-empty-p s))) s))
+
+(defun slacko-render-cached-user (host user-id)
+  "Display name already known for USER-ID on HOST, or nil.
+For callers that turn many messages into text at once and cannot
+afford a request per name."
+  (slacko-render--non-empty
+   (gethash (format "%s:%s" host user-id) slacko-render--user-cache)))
+
+(defun slacko-render-cache-user (host user-id name)
+  "Remember NAME as the display name of USER-ID on HOST.
+For names that arrive as part of something else, so that nobody spends
+a `users.info' request on a name Slack already sent.  An entry that is
+there already stands: it came from the profile itself and says what the
+person calls themselves."
+  (when (and host user-id (slacko-render--non-empty name))
+    (let ((key (format "%s:%s" host user-id)))
+      (unless (gethash key slacko-render--user-cache)
+        (puthash key name slacko-render--user-cache))
+      (gethash key slacko-render--user-cache))))
 
 (defun slacko-render-resolve-user (host user-id)
   "Resolve USER-ID to a display name for workspace HOST.
@@ -65,6 +89,7 @@ Results are cached.  Returns USER-ID if resolution fails."
   (let ((cache-key (format "%s:%s" host user-id)))
     (or (slacko-render--non-empty
          (gethash cache-key slacko-render--user-cache))
+        (and (not slacko-render-resolve-mentions) user-id)
         (condition-case nil
             (let* ((resp (slacko-creds-api-request
                           host "users.info"
@@ -101,22 +126,68 @@ If HOST is nil or credentials unavailable, return TEXT unchanged."
 ;;; Channel Resolution
 
 (defvar slacko-render--channel-cache (make-hash-table :test 'equal)
-  "Cache of channel-id -> channel-name, keyed as \"host:channel-id\".")
+  "Cache of channel-id -> the alist Slack describes it with.
+Keyed as \"host:channel-id\".")
+
+(defun slacko-render-cache-channel (host channel)
+  "Remember CHANNEL, as Slack describes it, for workspace HOST.
+A search result describes the conversation each message came from well
+enough to name it, which spares whoever opens one a
+`conversations.info' request."
+  (when-let* ((id (alist-get 'id channel))
+              (key (format "%s:%s" host id)))
+    (unless (gethash key slacko-render--channel-cache)
+      (puthash key channel slacko-render--channel-cache))
+    (gethash key slacko-render--channel-cache)))
+
+(defun slacko-render-channel (host channel-id)
+  "The conversation CHANNEL-ID on HOST, as Slack describes it, or nil.
+Results are cached, one `conversations.info' per conversation."
+  (let ((cache-key (format "%s:%s" host channel-id)))
+    (or (gethash cache-key slacko-render--channel-cache)
+        (and slacko-render-resolve-mentions
+             (condition-case nil
+                 (when-let* ((resp (slacko-creds-api-request
+                                    host "conversations.info"
+                                    `((channel ,channel-id))))
+                             (channel (alist-get 'channel resp)))
+                   (puthash cache-key channel slacko-render--channel-cache)
+                   channel)
+               (error nil))))))
 
 (defun slacko-render-resolve-channel (host channel-id)
   "Resolve CHANNEL-ID to a channel name for workspace HOST.
 Results are cached.  Returns CHANNEL-ID if resolution fails."
-  (let ((cache-key (format "%s:%s" host channel-id)))
-    (or (gethash cache-key slacko-render--channel-cache)
-        (condition-case nil
-            (let* ((resp (slacko-creds-api-request
-                          host "conversations.info"
-                          `((channel ,channel-id))))
-                   (channel (alist-get 'channel resp))
-                   (name (or (alist-get 'name channel) channel-id)))
-              (puthash cache-key name slacko-render--channel-cache)
-              name)
-          (error channel-id)))))
+  (or (slacko-render--non-empty
+       (alist-get 'name (slacko-render-channel host channel-id)))
+      channel-id))
+
+(defun slacko-render--group-members (name)
+  "Members of a group conversation NAME, as Slack spells it.
+Slack names one `mpdm-alice--bob--carol-1' and leaves the reading of it
+to whoever displays it."
+  (when (and (stringp name)
+             (string-match "\\`mpdm-\\(.+\\)-[0-9]+\\'" name))
+    (string-join (split-string (match-string 1 name) "--" t) ", ")))
+
+(defun slacko-render-conversation-label (host channel)
+  "How the conversation CHANNEL on HOST reads, or nil when it cannot be named.
+CHANNEL is the alist Slack describes it with, from a search result or
+from `conversations.info'; the two spell it the same way.  Slack names
+a one-to-one conversation after the other party's user id alone, so
+that name is resolved like any other mention."
+  (cond
+   ((null channel) nil)
+   ((eq (alist-get 'is_im channel) t)
+    (when-let* ((user (or (alist-get 'user channel)
+                          (alist-get 'name channel))))
+      (concat "@" (slacko-render-resolve-user host user))))
+   ((eq (alist-get 'is_mpim channel) t)
+    (when-let* ((members (slacko-render--group-members
+                          (alist-get 'name channel))))
+      (concat "@" members)))
+   ((slacko-render--non-empty (alist-get 'name channel))
+    (concat "#" (alist-get 'name channel)))))
 
 (defun slacko-render-resolve-channel-mentions (host text)
   "Replace <#CHANNEL_ID|name> mentions in TEXT with org links.
@@ -325,7 +396,10 @@ MSG is a plist with these keys:
   :channel-name - channel name (optional)
   :channel-id   - channel ID (optional)
   :conversation-type - \"Channel\", \"DM\", etc. (optional)
-  :share-info   - shared message metadata plist (optional)"
+  :share-info   - shared message metadata plist (optional)
+
+Returns a marker where the reactions line of this message belongs, for
+callers that fetch reactions after the message is on screen."
   (let* ((author (or (slacko-render--non-empty (plist-get msg :author))
                      "Unknown"))
          (author-id (plist-get msg :author-id))
@@ -365,10 +439,11 @@ MSG is a plist with these keys:
     ;; Files
     (when files
       (slacko-render--insert-files files host))
-    ;; Reactions
-    (slacko-render--insert-reactions reactions)
-    ;; Trailing newline
-    (insert "\n")))
+    ;; Reactions, and where a later arriving set of them goes
+    (prog1 (point-marker)
+      (slacko-render--insert-reactions reactions)
+      ;; Trailing newline
+      (insert "\n"))))
 
 (defun slacko-render-setup-font-lock ()
   "Set up font-lock keywords for a Slacko buffer.

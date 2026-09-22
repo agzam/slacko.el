@@ -5,8 +5,8 @@
 ;; Author: Ag Ibragimov <agzam.ibragimov@gmail.com>
 ;; Maintainer: Ag Ibragimov <agzam.ibragimov@gmail.com>
 ;; Created: October 18, 2025
-;; Modified: January 20, 2025
-;; Version: 1.3.0
+;; Modified: September 22, 2026
+;; Version: 1.4.0
 ;; Keywords: tools
 ;; Homepage: https://github.com/agzam/slacko
 ;; Package-Requires: ((emacs "29.4"))
@@ -26,10 +26,15 @@
 (require 'slacko-mrkdwn)
 (require 'slacko-render)
 (require 'slacko-creds)
+(require 'slacko-reactions)
 (require 'slacko-thread)
 
 (defvar slacko-emoji--buffer-host) ; forward declaration from slacko-emoji.el
 (declare-function slacko-emoji--maybe-enable "slacko-emoji")
+
+;; `slacko-consult' requires this file, and loads only where Consult is
+;; installed, so it can be neither required nor assumed here
+(declare-function slacko-consult-search "slacko-consult")
 
 ;;; Customizable Variables
 
@@ -257,39 +262,20 @@ Returns parsed JSON response or nil."
           :conversation-type conversation-type
           :share-info share-info)))
 
-(defun slacko--fetch-reactions (host channel-id ts)
-  "Fetch reactions for a message at TS in CHANNEL-ID on HOST.
-Uses conversations.history with inclusive=true and limit=1.
-Returns the reactions alist or nil."
-  (let ((resp (slacko-creds-api-request
-               host "conversations.history"
-               `((channel ,channel-id)
-                 (latest ,ts)
-                 (inclusive "true")
-                 (limit "1")))))
-    (when (eq (alist-get 'ok resp) t)
-      (let ((msg (car (alist-get 'messages resp))))
-        (alist-get 'reactions msg)))))
-
-(defun slacko--enrich-matches-with-reactions (matches)
-  "Enrich search MATCHES with reactions from the API.
-Slack's search.messages doesn't return reactions.  For messages
-where `no_reactions' is absent, fetch the full message to get them.
-Mutates and returns MATCHES."
-  (dolist (match matches)
-    (unless (alist-get 'no_reactions match)
-      (let* ((channel (alist-get 'channel match))
-             (channel-id (when channel (alist-get 'id channel)))
-             (ts (alist-get 'ts match))
-             (permalink (alist-get 'permalink match))
-             (host (when (and (stringp permalink)
-                              (string-match "https://\\([^/]+\\)" permalink))
-                     (match-string 1 permalink))))
-        (when (and host channel-id ts)
-          (let ((reactions (slacko--fetch-reactions host channel-id ts)))
-            (when reactions
-              (nconc match (list (cons 'reactions reactions)))))))))
-  matches)
+(defun slacko--render-match (match)
+  "Render search result MATCH into the current buffer.
+Returns the arguments `slacko-reactions-register' needs for it, or nil
+when the message carries its reactions already or has none.  Slack's
+search.messages never returns reactions, so every message that has any
+is registered and filled in later."
+  (let* ((msg (slacko--parse-result match))
+         (marker (slacko-render-message msg)))
+    (unless (or (plist-get msg :reactions)
+                (alist-get 'no_reactions match))
+      (list (plist-get msg :host)
+            (plist-get msg :channel-id)
+            (plist-get msg :ts)
+            marker))))
 
 (defun slacko--display-results (response &optional append)
   "Display search results from RESPONSE in `org-mode' buffer.
@@ -305,17 +291,16 @@ If APPEND is non-nil, append to existing results."
     (if (not ok)
         (message "Slack search failed: %s" (alist-get 'error response))
 
-      ;; Enrich matches with reactions (search.messages doesn't return them)
-      (setq matches (slacko--enrich-matches-with-reactions matches))
-
       (let ((buffer (get-buffer-create slacko-search-buffer-name)))
         (with-current-buffer buffer
         (let ((saved-point (when append (point)))
               (saved-window-start (when append
                                     (and (get-buffer-window (current-buffer))
-                                         (window-start (get-buffer-window (current-buffer)))))))
+                                         (window-start (get-buffer-window (current-buffer))))))
+              (pending nil))
           
           (unless append
+            (slacko-reactions-reset)
             (let ((inhibit-read-only t))
               (erase-buffer)
               (insert (format "#+TITLE: Slack Search Results for: %s\n" slacko--current-query))
@@ -325,7 +310,7 @@ If APPEND is non-nil, append to existing results."
           (let ((inhibit-read-only t))
             (goto-char (point-max))
             (dolist (match matches)
-              (slacko-render-message (slacko--parse-result match)))
+              (push (slacko--render-match match) pending))
             
             ;; Indent the entire buffer properly
             (indent-region (point-min) (point-max)))
@@ -346,6 +331,11 @@ If APPEND is non-nil, append to existing results."
             (unless (eq major-mode 'slacko-search-mode)
               (slacko-search-mode))
             (goto-char (point-min)))
+          
+          ;; After the major mode, which wipes buffer-local state
+          (dolist (entry (delq nil (nreverse pending)))
+            (apply #'slacko-reactions-register entry))
+          (slacko-reactions-setup)
           
           ;; Load next page if available, but only after appending results
           ;; For the first page, don't auto-load to avoid race conditions
@@ -394,17 +384,9 @@ author, channel, timestamp, and message content with proper formatting.
 
 ;;; Interactive Commands
 
-;;;###autoload
-(defun slacko-search (query &optional host)
-  "Search Slack messages for QUERY.
-Display results in an `org-mode' buffer with pagination.
-
-With a prefix argument (\\[universal-argument]), prompt for the
-workspace to search in.  Otherwise uses `slacko-default-host' or
-the first available workspace."
-  (interactive
-   (let ((host (when current-prefix-arg (slacko--prompt-host))))
-     (list (read-string "Search Slack: ") host)))
+(defun slacko--search-buffer (query &optional host)
+  "Search Slack messages for QUERY in workspace HOST.
+Displays the results in an `org-mode' buffer."
   (setq slacko--current-query query
         slacko--current-host host
         slacko--current-page 1
@@ -413,6 +395,30 @@ the first available workspace."
   (let ((response (slacko--make-request query 1)))
     (when response
       (slacko--display-results response nil))))
+
+(defun slacko--consult-available-p ()
+  "Whether a Consult session can run the search."
+  (and (require 'consult nil t)
+       (require 'slacko-consult nil t)
+       t))
+
+;;;###autoload
+(defun slacko-search (&optional query host)
+  "Search Slack messages for QUERY in workspace HOST.
+
+With a prefix argument (\\[universal-argument]), prompt for the
+workspace to search in.  Otherwise uses `slacko-default-host' or
+the first available workspace.
+
+With Consult installed the search runs as a Consult session, where
+results arrive as the query is typed and RET opens a thread.  Without
+it, the query is read first and the results are displayed in an
+`org-mode' buffer."
+  (interactive
+   (list nil (when current-prefix-arg (slacko--prompt-host))))
+  (if (slacko--consult-available-p)
+      (slacko-consult-search query host)
+    (slacko--search-buffer (or query (read-string "Search Slack: ")) host)))
 
 (provide 'slacko)
 ;;; slacko.el ends here

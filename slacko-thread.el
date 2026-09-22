@@ -23,6 +23,7 @@
 (require 'url)
 (require 'json)
 (require 'org)
+(require 'seq)
 (require 'slacko-creds)
 (require 'slacko-render)
 
@@ -141,18 +142,48 @@ LEVEL is the org heading level (1 or 2)."
           :reactions reactions
           :host host)))
 
+(defvar-local slacko-thread--id nil
+  "Which thread this buffer holds: host, conversation and parent timestamp.")
+
+(defun slacko-thread--buffer-name (label)
+  "Name of a thread buffer showing LABEL.
+Keeps the shape of `slacko-thread-buffer-name', which is normally
+wrapped in asterisks."
+  (cond ((null label) slacko-thread-buffer-name)
+        ((string-suffix-p "*" slacko-thread-buffer-name)
+         (concat (substring slacko-thread-buffer-name 0 -1) ": " label "*"))
+        (t (concat slacko-thread-buffer-name ": " label))))
+
+(defun slacko-thread--find-buffer (id)
+  "The buffer already holding the thread ID, or nil."
+  (seq-find (lambda (buffer)
+              (equal id (buffer-local-value 'slacko-thread--id buffer)))
+            (buffer-list)))
+
+(defun slacko-thread--buffer (label id)
+  "Buffer for the thread ID, named after LABEL.
+A thread that is open already is refreshed in place; a different one
+gets a buffer of its own, so picking several threads out of one set of
+search results leaves them all open."
+  (or (slacko-thread--find-buffer id)
+      (generate-new-buffer (slacko-thread--buffer-name label))))
+
 (defun slacko-thread--display (messages host workspace channel-id url)
   "Display MESSAGES in an org buffer.
 HOST is the full domain.  WORKSPACE is the short name.
 CHANNEL-ID and URL are for context."
   (ignore workspace) ; kept in signature for callers; host suffices
-  (let ((buf (get-buffer-create slacko-thread-buffer-name))
-        (parent (car messages))
-        (replies (cdr messages)))
+  (let* ((label (or (slacko-render-conversation-label
+                     host (slacko-render-channel host channel-id))
+                    channel-id))
+         (id (list host channel-id (alist-get 'ts (car messages))))
+         (buf (slacko-thread--buffer label id))
+         (parent (car messages))
+         (replies (cdr messages)))
     (with-current-buffer buf
       (let ((inhibit-read-only t))
         (erase-buffer)
-        (insert (format "#+TITLE: Slack Thread\n"))
+        (insert (format "#+TITLE: %s\n" label))
         (insert (format "#+SOURCE: %s\n" url))
         (insert (format "#+DATE: %s\n\n" (format-time-string "%Y-%m-%d %H:%M:%S")))
         ;; Parent message
@@ -167,6 +198,8 @@ CHANNEL-ID and URL are for context."
       (setq slacko-emoji--buffer-host host)
       (unless (eq major-mode 'slacko-thread-mode)
         (slacko-thread-mode))
+      ;; after the major mode, which wipes buffer-local state
+      (setq slacko-thread--id id)
       (goto-char (point-min)))
     (switch-to-buffer buf)))
 

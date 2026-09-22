@@ -170,11 +170,95 @@
 
   (it "resolves empty name from cache"
     (let ((slacko-render--channel-cache (make-hash-table :test 'equal)))
-      (puthash "host:C123" "random" slacko-render--channel-cache)
+      (puthash "host:C123" '((id . "C123") (name . "random"))
+               slacko-render--channel-cache)
       (expect (slacko-render-resolve-channel-mentions
                "host" "See <#C123|>")
               :to-equal
               "See [[slack://host/archives/C123][#random]]"))))
+
+(describe "slacko-render-channel"
+  (it "asks Slack once and remembers the answer"
+    (let ((slacko-render--channel-cache (make-hash-table :test 'equal)))
+      (spy-on 'slacko-creds-api-request :and-return-value
+              '((ok . t) (channel . ((id . "C123") (name . "general")))))
+      (expect (slacko-render-channel "host" "C123")
+              :to-equal '((id . "C123") (name . "general")))
+      (expect (slacko-render-channel "host" "C123")
+              :to-equal '((id . "C123") (name . "general")))
+      (expect (spy-calls-count 'slacko-creds-api-request) :to-equal 1)))
+
+  (it "asks nobody where a render must not block"
+    (let ((slacko-render--channel-cache (make-hash-table :test 'equal))
+          (slacko-render-resolve-mentions nil))
+      (spy-on 'slacko-creds-api-request)
+      (expect (slacko-render-channel "host" "C123") :to-be nil)
+      (expect 'slacko-creds-api-request :not :to-have-been-called)))
+
+  (it "returns nil when Slack has nothing to say"
+    (let ((slacko-render--channel-cache (make-hash-table :test 'equal)))
+      (spy-on 'slacko-creds-api-request :and-return-value
+              '((ok . :json-false) (error . "channel_not_found")))
+      (expect (slacko-render-channel "host" "C123") :to-be nil)
+      (expect (slacko-render-resolve-channel "host" "C123") :to-equal "C123"))))
+
+(describe "slacko-render-cache-channel"
+  (it "spares the lookup for a conversation already described"
+    (let ((slacko-render--channel-cache (make-hash-table :test 'equal)))
+      (spy-on 'slacko-creds-api-request)
+      (slacko-render-cache-channel "host" '((id . "C123") (name . "general")))
+      (expect (slacko-render-resolve-channel "host" "C123") :to-equal "general")
+      (expect 'slacko-creds-api-request :not :to-have-been-called)))
+
+  (it "leaves what is cached alone"
+    (let ((slacko-render--channel-cache (make-hash-table :test 'equal)))
+      (slacko-render-cache-channel "host" '((id . "C123") (name . "general")))
+      (slacko-render-cache-channel "host" '((id . "C123") (name . "other")))
+      (expect (slacko-render-resolve-channel "host" "C123") :to-equal "general")))
+
+  (it "ignores a conversation without an id"
+    (let ((slacko-render--channel-cache (make-hash-table :test 'equal)))
+      (expect (slacko-render-cache-channel "host" '((name . "general")))
+              :to-be nil)
+      (expect (hash-table-count slacko-render--channel-cache) :to-equal 0))))
+
+(describe "slacko-render--group-members"
+  (it "reads the members out of the name Slack gives a group"
+    (expect (slacko-render--group-members "mpdm-alice--bob--carol-1")
+            :to-equal "alice, bob, carol"))
+
+  (it "returns nil for anything else"
+    (expect (slacko-render--group-members "general") :to-be nil)
+    (expect (slacko-render--group-members nil) :to-be nil)))
+
+(describe "slacko-render-conversation-label"
+  (it "names a channel"
+    (expect (slacko-render-conversation-label
+             "host" '((id . "C1") (name . "general") (is_channel . t)))
+            :to-equal "#general"))
+
+  (it "names a one-to-one conversation after the other party"
+    (spy-on 'slacko-render-resolve-user :and-return-value "natalie.see")
+    (expect (slacko-render-conversation-label
+             "host" '((id . "D1") (is_im . t) (user . "U090")))
+            :to-equal "@natalie.see"))
+
+  (it "takes the other party from the name when that is all there is"
+    (spy-on 'slacko-render-resolve-user :and-call-fake
+            (lambda (_host id) id))
+    (expect (slacko-render-conversation-label
+             "host" '((id . "D1") (is_im . t) (name . "U090")))
+            :to-equal "@U090"))
+
+  (it "names a group conversation after its members"
+    (expect (slacko-render-conversation-label
+             "host" '((id . "G1") (is_mpim . t)
+                      (name . "mpdm-alice--bob--carol-1")))
+            :to-equal "@alice, bob, carol"))
+
+  (it "returns nil when there is no conversation to name"
+    (expect (slacko-render-conversation-label "host" nil) :to-be nil)
+    (expect (slacko-render-conversation-label "host" '((id . "C1"))) :to-be nil)))
 
 ;;; Message Rendering
 

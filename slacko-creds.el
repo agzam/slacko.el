@@ -346,39 +346,83 @@ automatically runs `slacko-creds-refresh' and retries."
 
 ;;; API Requests
 
+(defun slacko-creds--auth-headers (host)
+  "Request headers carrying HOST's API token and session cookie."
+  (let ((token (slacko-creds-get host "token"))
+        (cookie (slacko-creds-get host "cookie")))
+    (unless token
+      (error "No credentials for %s.  Is this workspace logged in?" host))
+    (unless cookie
+      (error "No cookie for %s.  Is this workspace logged in?" host))
+    `(("Authorization" . ,(format "Bearer %s" token))
+      ("Cookie" . ,(format "d=%s;" cookie))
+      ("Content-Type" . "application/json"))))
+
+(defun slacko-creds--api-url (endpoint params)
+  "URL of Slack API ENDPOINT carrying the query PARAMS alist."
+  (format "https://slack.com/api/%s?%s"
+          endpoint (url-build-query-string params)))
+
+(defun slacko-creds--read-response ()
+  "Parse the JSON body of the HTTP response in the current buffer.
+Returns nil when there is no body or it does not parse, which is what a
+request cancelled mid-flight leaves behind.  `url' delivers the body
+undecoded, so anything outside ASCII arrives mangled unless it is
+decoded here."
+  (goto-char (point-min))
+  (when (re-search-forward "^\r?$" nil t)
+    (forward-line 1)
+    (let* ((raw (buffer-substring-no-properties (point) (point-max)))
+           (body (if enable-multibyte-characters
+                     raw
+                   (decode-coding-string raw 'utf-8)))
+           (json-object-type 'alist)
+           (json-array-type 'list)
+           (json-key-type 'symbol))
+      (unless (string-empty-p body)
+        (condition-case nil
+            (json-read-from-string body)
+          (error nil))))))
+
 (defun slacko-creds-api-request (host endpoint params)
   "Make a synchronous authenticated Slack API request.
 HOST is the workspace domain (e.g. \"foo.slack.com\").
 ENDPOINT is the API method (e.g. \"users.info\").
 PARAMS is an alist of query parameters.
 Returns parsed JSON response or nil."
-  (let* ((token (slacko-creds-get host "token"))
-         (cookie (slacko-creds-get host "cookie"))
-         (_ (unless token
-              (error "No credentials for %s.  Is this workspace logged in?" host)))
-         (_ (unless cookie
-              (error "No cookie for %s.  Is this workspace logged in?" host)))
-         (url-request-method "GET")
-         (url-request-extra-headers
-          `(("Authorization" . ,(format "Bearer %s" token))
-            ("Cookie" . ,(format "d=%s;" cookie))
-            ("Content-Type" . "application/json")))
+  (let* ((url-request-method "GET")
+         (url-request-extra-headers (slacko-creds--auth-headers host))
          (url-cookie-storage nil)
          (url-cookie-secure-storage nil)
-         (query-params (url-build-query-string params))
-         (url (format "https://slack.com/api/%s?%s" endpoint query-params))
-         (buf (url-retrieve-synchronously url t nil 15)))
+         (buf (url-retrieve-synchronously
+               (slacko-creds--api-url endpoint params) t nil 15)))
     (when buf
       (unwind-protect
           (with-current-buffer buf
-            (goto-char (point-min))
-            (when (re-search-forward "^$" nil t)
-              (forward-line 1)
-              (let* ((json-object-type 'alist)
-                     (json-array-type 'list)
-                     (json-key-type 'symbol))
-                (json-read))))
+            (slacko-creds--read-response))
         (kill-buffer buf)))))
+
+(defun slacko-creds-api-request-async (host endpoint params callback)
+  "Make an asynchronous authenticated Slack API request.
+HOST, ENDPOINT and PARAMS are as in `slacko-creds-api-request'.
+CALLBACK receives the parsed JSON response, or nil when the request
+failed.  Returns the request buffer, which a caller that no longer
+wants the response can kill."
+  (let* ((url-request-method "GET")
+         (url-request-extra-headers (slacko-creds--auth-headers host))
+         (url-cookie-storage nil)
+         (url-cookie-secure-storage nil))
+    (url-retrieve
+     (slacko-creds--api-url endpoint params)
+     (lambda (status)
+       (let ((buf (current-buffer))
+             (data (unless (plist-get status :error)
+                     (slacko-creds--read-response))))
+         (when (buffer-live-p buf)
+           (let ((kill-buffer-query-functions nil))
+             (kill-buffer buf)))
+         (funcall callback data)))
+     nil t t)))
 
 (provide 'slacko-creds)
 ;; Local Variables:
