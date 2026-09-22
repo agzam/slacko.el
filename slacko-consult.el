@@ -88,7 +88,7 @@ minibuffer past its usual height."
 ;;; Internal Variables
 
 (defvar slacko-consult--history nil
-  "History of queries for `slacko-consult-search'.")
+  "History of queries searched for in a Consult session.")
 
 (defvar slacko-consult--host nil
   "Workspace the live session searches.")
@@ -534,20 +534,18 @@ buffer-local, e.g. set through vertico-multiform, is respected."
 
 ;;; Entry point
 
-;;;###autoload
-(defun slacko-consult-search (&optional query host)
+(defun slacko-consult--search (&optional query host)
   "Search Slack messages in a Consult session.
-QUERY is what the session starts with.  HOST is the workspace to search;
-called interactively with a prefix argument (\\[universal-argument]),
-the workspace is asked for, otherwise `slacko-default-host' or the first
-one available is used.
+QUERY is what the session starts with.  HOST is the workspace to search,
+defaulting to `slacko-default-host' or the first one available.
+
+Not a command: `slacko-search' is the way in, and it comes here on its
+own wherever Consult is installed.
 
 Results arrive as the query is typed.  The candidate under point is
 rendered in a preview window, and RET opens its thread."
-  (interactive
-   (list nil (when current-prefix-arg (slacko--prompt-host))))
   (unless (featurep 'consult)
-    (user-error "`slacko-consult-search' needs Consult.  Use `slacko-search'"))
+    (user-error "A Consult session needs Consult.  Use `slacko-search'"))
   (let* ((slacko-consult--host (or host (slacko--default-host)))
          (slacko-consult--seen (make-hash-table :test 'equal))
          (workspace (car (split-string slacko-consult--host "\\."))))

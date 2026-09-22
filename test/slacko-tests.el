@@ -351,11 +351,11 @@
 (describe "slacko-search"
   (it "runs a Consult session when Consult is installed"
     (spy-on 'slacko--consult-available-p :and-return-value t)
-    (spy-on 'slacko-consult-search)
+    (spy-on 'slacko-consult--search)
     (spy-on 'slacko--search-buffer)
     (spy-on 'read-string)
     (slacko-search nil "team.slack.com")
-    (expect 'slacko-consult-search :to-have-been-called-with nil "team.slack.com")
+    (expect 'slacko-consult--search :to-have-been-called-with nil "team.slack.com")
     (expect 'slacko--search-buffer :not :to-have-been-called)
     (expect 'read-string :not :to-have-been-called))
 
@@ -380,10 +380,10 @@
   (it "asks which workspace to search only with a prefix argument"
     (spy-on 'slacko--prompt-host :and-return-value "chosen.slack.com")
     (spy-on 'slacko--consult-available-p :and-return-value t)
-    (spy-on 'slacko-consult-search)
+    (spy-on 'slacko-consult--search)
     (let ((current-prefix-arg '(4)))
       (call-interactively #'slacko-search))
-    (expect 'slacko-consult-search :to-have-been-called-with
+    (expect 'slacko-consult--search :to-have-been-called-with
             nil "chosen.slack.com")
     (spy-on 'slacko--prompt-host)
     (call-interactively #'slacko-search)

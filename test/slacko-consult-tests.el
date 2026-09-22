@@ -44,6 +44,11 @@ test's message."
                  (paging . ((page . ,(or page 1))
                             (pages . ,(or pages 1))))))))
 
+(describe "the Consult session"
+  (it "is not a second command beside `slacko-search'"
+    (expect (commandp 'slacko-consult--search) :to-be nil)
+    (expect (commandp 'slacko-search) :to-be-truthy)))
+
 (describe "slacko-consult--plain-text"
   (it "resolves a mention from the name Slack sent with it"
     (expect (slacko-consult--plain-text "hi <@U123|alice> there" "team.slack.com")

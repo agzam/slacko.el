@@ -34,7 +34,7 @@
 
 ;; `slacko-consult' requires this file, and loads only where Consult is
 ;; installed, so it can be neither required nor assumed here
-(declare-function slacko-consult-search "slacko-consult")
+(declare-function slacko-consult--search "slacko-consult")
 
 ;;; Customizable Variables
 
@@ -417,7 +417,7 @@ it, the query is read first and the results are displayed in an
   (interactive
    (list nil (when current-prefix-arg (slacko--prompt-host))))
   (if (slacko--consult-available-p)
-      (slacko-consult-search query host)
+      (slacko-consult--search query host)
     (slacko--search-buffer (or query (read-string "Search Slack: ")) host)))
 
 (provide 'slacko)
