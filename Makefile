@@ -67,9 +67,14 @@ lint: | $(ELPA)
 	  --eval "(setq package-lint-main-file \"slacko.el\")" \
 	  -f package-lint-batch-and-exit $(SOURCES)
 
+# the experimental verb check is t on Emacs 29 and nil from 30 on, so
+# the flag is pinned rather than left to the running Emacs.  It reads a
+# verb out of any relative clause - "Fetch what WINDOW now shows" is a
+# finding - and melpazoid, which is what a reviewer runs, leaves it off.
 checkdoc:
 	@out=$$($(EMACS_Q) --batch \
 	  --eval "(require 'checkdoc)" \
+	  --eval "(setq checkdoc-verb-check-experimental-flag nil)" \
 	  --eval "(dolist (f '($(SOURCES_EL))) (checkdoc-file f))" 2>&1); \
 	if [ -n "$$out" ]; then echo "$$out"; exit 1; else echo "checkdoc: clean"; fi
 
