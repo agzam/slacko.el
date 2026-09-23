@@ -1,3 +1,4 @@
+---
 name: Run Tests
 on: [push, pull_request]
 jobs:
@@ -23,3 +24,9 @@ jobs:
 
       - name: Check byte-compilation
         run: make check-compile
+
+      - name: Lint
+        run: make lint
+
+      - name: Checkdoc
+        run: make checkdoc

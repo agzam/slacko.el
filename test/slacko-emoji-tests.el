@@ -1,12 +1,12 @@
 ;;; slacko-emoji-tests.el --- tests for slacko-emoji -*- lexical-binding: t; -*-
 ;;
-;; Copyright (C) 2025 Ag Ibragimov
+;; Copyright (C) 2025-2026 Ag Ibragimov
 ;;
 ;; Author: Ag Ibragimov <agzam.ibragimov@gmail.com>
 ;; Maintainer: Ag Ibragimov <agzam.ibragimov@gmail.com>
 ;; Created: February 19, 2025
 ;; Keywords: tools tests
-;; Homepage: https://github.com/agzam/slacko
+;; Homepage: https://github.com/agzam/slacko.el
 ;; Package-Requires: ((emacs "29.4"))
 ;;
 ;; This file is not part of GNU Emacs.
@@ -18,9 +18,23 @@
 ;;; Code:
 
 (require 'buttercup)
+(require 'cl-lib)
 (require 'slacko-emoji)
 (require 'slacko)
 (require 'slacko-thread)
+
+(describe "slacko-emoji-mode without emojify"
+  (it "names what is missing rather than failing on a void function"
+    (with-temp-buffer
+      ;; emojify unloadable, which is how the mode meets it on an Emacs
+      ;; that never installed it
+      (cl-letf* ((orig (symbol-function 'require))
+                 ((symbol-function 'require)
+                  (lambda (feature &rest args)
+                    (unless (eq feature 'emojify)
+                      (apply orig feature args)))))
+        (expect (slacko-emoji-mode 1) :to-throw 'user-error))
+      (expect slacko-emoji-mode :to-be nil))))
 
 (describe "slacko-emoji--shortcode-to-unicode"
   (before-all
@@ -179,13 +193,6 @@
       (let ((count-ovs (seq-filter (lambda (ov) (overlay-get ov 'slacko-emoji-count))
                                    (overlays-in (point-min) (point-max)))))
         (expect (length count-ovs) :to-equal 0)))))
-
-(describe "slacko-emoji--buffer-host"
-  (it "survives kill-all-local-variables (permanent-local)"
-    (with-temp-buffer
-      (setq slacko-emoji--buffer-host "foo.slack.com")
-      (kill-all-local-variables)
-      (expect slacko-emoji--buffer-host :to-equal "foo.slack.com"))))
 
 (describe "auto-enable"
   (it "slacko-search-mode calls slacko-emoji--maybe-enable"

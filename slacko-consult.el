@@ -1,13 +1,13 @@
 ;;; slacko-consult.el --- Slack search in a Consult session -*- lexical-binding: t; -*-
 ;;
-;; Copyright (C) 2025 Ag Ibragimov
+;; Copyright (C) 2025-2026 Ag Ibragimov
 ;;
 ;; Author: Ag Ibragimov <agzam.ibragimov@gmail.com>
+;; Assisted-by: Claude:claude-opus-5
 ;; Maintainer: Ag Ibragimov <agzam.ibragimov@gmail.com>
 ;; Created: September 22, 2026
-;; Version: 0.0.1
-;; Keywords: tools
-;; Homepage: https://github.com/agzam/slacko
+;; Keywords: comm tools
+;; Homepage: https://github.com/agzam/slacko.el
 ;;
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 ;;
@@ -22,6 +22,10 @@
 ;; `slacko-search' routes here on its own when Consult is installed.
 ;; Consult is not a dependency of the package: without it nothing loads
 ;; this file and searching works as it always has.
+;;
+;; Embark is optional too.  Starting a session registers the result
+;; category with Embark where Embark is installed, and does nothing
+;; where it is not; loading this file on its own registers nothing.
 ;;
 ;;; Code:
 
@@ -43,7 +47,7 @@
 (declare-function consult--lookup-member "consult")
 (declare-function consult--read "consult")
 
-(defvar slacko-emoji--buffer-host) ; forward declaration from slacko-emoji.el
+;; Vertico is not a dependency either
 (defvar vertico-count)
 
 ;;; Customizable Variables
@@ -88,7 +92,7 @@ minibuffer past its usual height."
 ;;; Internal Variables
 
 (defvar slacko-consult--history nil
-  "History of queries for `slacko-consult-search'.")
+  "History of queries searched for in a Consult session.")
 
 (defvar slacko-consult--host nil
   "Workspace the live session searches.")
@@ -304,7 +308,7 @@ Returns the page to ask for next, or nil when there is none."
       (alist-get 'user channel))))
 
 (defun slacko-consult--learn-names (matches host)
-  "Cache what MATCHES give away about HOST at no cost.
+  "Cache what MATCHES give away about workspace HOST at no cost.
 Every result describes the conversation it came from, which is what
 naming a thread would otherwise cost a request.  Only two people write
 in a one-to-one conversation, so a message the other party wrote also
@@ -316,7 +320,7 @@ names them: their name and their id sit in the same result."
       (slacko-render-cache-user host partner (alist-get 'username match)))))
 
 (defun slacko-consult--unknown-partners (matches host)
-  "Ids of the people MATCHES are conversations with, whose name is unknown."
+  "Ids on HOST that MATCHES are conversations with, whose name is unknown."
   (delete-dups
    (delq nil
          (mapcar (lambda (match)
@@ -326,7 +330,7 @@ names them: their name and their id sit in the same result."
                  matches))))
 
 (defun slacko-consult--with-names (matches host callback)
-  "Name the conversations MATCHES come from, then call CALLBACK.
+  "Name the conversations MATCHES come from on HOST, then call CALLBACK.
 What the results already say is free.  What is left costs one
 `users.info' request per person, once per session, and the candidates
 wait for it rather than showing a user id nobody can read."
@@ -432,8 +436,8 @@ fetched once the buffer is on screen."
         (erase-buffer)
         (dolist (match matches)
           (push (slacko--render-match match) pending))
-        (setq slacko-emoji--buffer-host host)
-        (unless (eq major-mode 'slacko-search-mode)
+        (setq slacko-render-host host)
+        (unless (derived-mode-p 'slacko-search-mode)
           (slacko-search-mode))
         (goto-char (point-min))
         ;; after the major mode, which wipes buffer-local state
@@ -532,41 +536,6 @@ buffer-local, e.g. set through vertico-multiform, is respected."
     (kill-new text)
     (message "Copied message text")))
 
-;;; Entry point
-
-;;;###autoload
-(defun slacko-consult-search (&optional query host)
-  "Search Slack messages in a Consult session.
-QUERY is what the session starts with.  HOST is the workspace to search;
-called interactively with a prefix argument (\\[universal-argument]),
-the workspace is asked for, otherwise `slacko-default-host' or the first
-one available is used.
-
-Results arrive as the query is typed.  The candidate under point is
-rendered in a preview window, and RET opens its thread."
-  (interactive
-   (list nil (when current-prefix-arg (slacko--prompt-host))))
-  (unless (featurep 'consult)
-    (user-error "`slacko-consult-search' needs Consult.  Use `slacko-search'"))
-  (let* ((slacko-consult--host (or host (slacko--default-host)))
-         (slacko-consult--seen (make-hash-table :test 'equal))
-         (workspace (car (split-string slacko-consult--host "\\."))))
-    (minibuffer-with-setup-hook #'slacko-consult--scale-vertico-count
-      (consult--read
-       (consult--async-pipeline
-        (consult--async-min-input)
-        (consult--async-throttle)
-        #'slacko-consult--source)
-       :prompt (format "Slack %s: " workspace)
-       :lookup #'consult--lookup-member
-       :state (slacko-consult--state)
-       :annotate #'slacko-consult--annotate
-       :category 'slacko-consult-result
-       :history '(:input slacko-consult--history)
-       :initial query
-       :require-match t
-       :sort nil))))
-
 ;;; Embark
 
 (defvar embark-general-map)
@@ -589,23 +558,57 @@ rendered in a preview window, and RET opens its thread."
     (slacko-consult--render-buffer slacko-search-buffer-name matches host t)))
 
 (defun slacko-consult--embark-setup ()
-  "Register the `slacko-consult-result' category with Embark."
-  (set-keymap-parent slacko-consult-embark-map embark-general-map)
-  (setf (alist-get 'slacko-consult-result embark-keymap-alist)
-        'slacko-consult-embark-map)
-  (setf (alist-get 'slacko-consult-result embark-exporters-alist)
-        #'slacko-consult-embark-export)
-  (setf (alist-get 'slacko-consult-result embark-default-action-overrides)
-        #'slacko-consult-open-thread))
+  "Give the `slacko-consult-result' category to Embark, where it is installed.
+Embark is loaded here rather than waited for: a session is often what
+pulls this file in, by which time anything left for Embark to run on
+load has already run."
+  (when (require 'embark nil t)
+    (set-keymap-parent slacko-consult-embark-map embark-general-map)
+    (setf (alist-get 'slacko-consult-result embark-keymap-alist)
+          'slacko-consult-embark-map)
+    (setf (alist-get 'slacko-consult-result embark-exporters-alist)
+          #'slacko-consult-embark-export)
+    (setf (alist-get 'slacko-consult-result embark-default-action-overrides)
+          #'slacko-consult-open-thread)))
 
-;; not `featurep': whichever of the two loads second has to be the one
-;; that registers, and a search can well be what pulls this file in
-;; before Embark was ever called
-(with-eval-after-load 'embark
-  (slacko-consult--embark-setup))
+;;; Entry point
+
+(defun slacko-consult--search (&optional query host)
+  "Search Slack messages in a Consult session.
+QUERY is what the session starts with.  HOST is the workspace to search,
+defaulting to `slacko-default-host' or the first one available.
+
+Not a command: `slacko-search' is the way in, and it comes here on its
+own wherever Consult is installed.
+
+Results arrive as the query is typed.  The candidate under point is
+rendered in a preview window, and RET opens its thread."
+  (unless (featurep 'consult)
+    (user-error "A Consult session needs Consult.  Use `slacko-search'"))
+  (slacko-consult--embark-setup)
+  (let* ((slacko-consult--host (or host (slacko--default-host)))
+         (slacko-consult--seen (make-hash-table :test 'equal))
+         (workspace (car (split-string slacko-consult--host "\\."))))
+    (minibuffer-with-setup-hook #'slacko-consult--scale-vertico-count
+      (consult--read
+       (consult--async-pipeline
+        (consult--async-min-input)
+        (consult--async-throttle)
+        #'slacko-consult--source)
+       :prompt (format "Slack %s: " workspace)
+       :lookup #'consult--lookup-member
+       :state (slacko-consult--state)
+       :annotate #'slacko-consult--annotate
+       :category 'slacko-consult-result
+       :history '(:input slacko-consult--history)
+       :initial query
+       :require-match t
+       :sort nil))))
 
 (provide 'slacko-consult)
+
 ;; Local Variables:
 ;; package-lint-main-file: "slacko.el"
 ;; End:
+
 ;;; slacko-consult.el ends here

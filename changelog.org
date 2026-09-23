@@ -4,6 +4,12 @@
 All notable changes to this project will be documented in this file.
 
 * [1.4.0] - 2026-09-22
+** Changed (breaking)
+- ~C-c o~ is gone from both mode maps.  ~C-c LETTER~ is reserved for users, and a package taking one is an error to ~package-lint~.  ~RET~ now follows the link at point, which is what ~C-c C-o~ did in these read-only org buffers, and ~C-c C-o~ forces the Slack desktop app
+- The face ~slacko-emoji-count~ is now ~slacko-render-reaction-count~ and lives in ~slacko-render.el~.  The reaction line is rendered whether or not emojify is installed, so the face it uses cannot live in the file that hard-requires emojify
+- ~slacko-emoji--buffer-host~ is now ~slacko-render-host~, defined where the rendering happens rather than forward-declared in three files
+- ~slacko-emoji-cache-directory~ defaults to ~user-emacs-directory~ unconditionally.  It used to prefer Doom's ~doom-cache-dir~, which has no business in a package
+
 ** Added
 - Consult session for searching: with ~consult~ installed, ~slacko-search~ runs the search in the minibuffer, results arriving while the query is typed.  Candidates carry the message itself, so the preview and every action work off what the search already returned
 - ~RET~ on a result opens its thread; the candidate under point renders in a ~slacko-search-mode~ buffer when ~consult-preview-key~ says so, without a single request
@@ -21,6 +27,16 @@ All notable changes to this project will be documented in this file.
 
 ** Fixed
 - Non-ASCII text in API responses arrived mangled: ~url~ hands the body back undecoded, and it is decoded as UTF-8 now
+- Embark registration no longer happens at load time.  A Consult session registers the result category when it starts, so installing or loading the package leaves Embark untouched
+- The blockquote faces named a customize group, ~slacko-search~, that no package file ever defined; ~slacko-creds~ and ~slacko-thread~ sat under ~tools~ rather than under ~slacko~
+- ~slacko-emoji.el~ carried no SPDX identifier and a ~Package-Requires~ header, which has no effect outside the main file
+- ~slacko-thread--display~ took a WORKSPACE argument it ignored
+- The browser tab is closed through ~call-process~ rather than a shell string built from ~slacko-browser-name~
+- Installing the package without emojify printed ~Cannot open load file: emojify~: ~slacko-emoji.el~ now soft-requires it, the way ~slacko-consult.el~ soft-requires Consult, and ~slacko-emoji-mode~ says what is missing instead of failing on a void function
+
+** Build
+- ~make lint~, ~make checkdoc~ and ~make melpazoid~ - the checks a MELPA reviewer runs.  ~make lint~ is never filtered
+- ~make check-compile~ removes the ~.elc~ files it produces, so a later ~make test~ cannot run against a stale one
 
 * [1.3.0] - 2026-07-02
 ** Fixed
@@ -69,7 +85,7 @@ All notable changes to this project will be documented in this file.
 * [0.1.0] - 2026-02-17
 ** Added
 - slack-creds with functions to retrieve token from the registered slack app and keychain - Mac-only for now
-- slack-thread for viewing individual threads and messages 
+- slack-thread for viewing individual threads and messages
 
 * [0.0.2] - 2025-01-20
 

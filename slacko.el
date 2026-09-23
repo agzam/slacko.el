@@ -1,14 +1,14 @@
-;;; slacko.el --- Search in Slack -*- lexical-binding: t; -*-
+;;; slacko.el --- Search and read Slack in org-mode -*- lexical-binding: t; -*-
 ;;
-;; Copyright (C) 2025 Ag Ibragimov
+;; Copyright (C) 2025-2026 Ag Ibragimov
 ;;
 ;; Author: Ag Ibragimov <agzam.ibragimov@gmail.com>
+;; Assisted-by: Claude:claude-opus-5
 ;; Maintainer: Ag Ibragimov <agzam.ibragimov@gmail.com>
 ;; Created: October 18, 2025
-;; Modified: September 22, 2026
 ;; Version: 1.4.0
-;; Keywords: tools
-;; Homepage: https://github.com/agzam/slacko
+;; Keywords: comm tools
+;; Homepage: https://github.com/agzam/slacko.el
 ;; Package-Requires: ((emacs "29.4"))
 ;;
 ;; SPDX-License-Identifier: GPL-3.0-or-later
@@ -16,25 +16,33 @@
 ;; This file is not part of GNU Emacs.
 ;;
 ;;; Commentary:
-;;  El Slacko - a Slack reader for Emacs
-;;  
+;;
+;; El Slacko searches Slack from Emacs and renders what it finds as an
+;; org outline: a heading per message, the author, the conversation and
+;; the timestamp as links, the mrkdwn body converted to org markup, and
+;; reactions filled in behind your scrolling.
+;;
+;; `slacko-search' is the way in.  `slacko-thread-capture' opens the
+;; thread behind a Slack URL at point or in the kill ring.  Credentials
+;; are extracted from the Slack desktop app by `slacko-creds-refresh'.
+;;
+;; Consult, Embark and emojify are optional and none of them is a
+;; dependency.  With Consult installed the search runs as a Consult
+;; session, results arriving as the query is typed; without it the query
+;; is read first and the results fill an org buffer.
 ;;
 ;;; Code:
 
-(require 'json)
+(require 'auth-source)
 (require 'org)
-(require 'slacko-mrkdwn)
 (require 'slacko-render)
 (require 'slacko-creds)
 (require 'slacko-reactions)
 (require 'slacko-thread)
 
-(defvar slacko-emoji--buffer-host) ; forward declaration from slacko-emoji.el
-(declare-function slacko-emoji--maybe-enable "slacko-emoji")
-
 ;; `slacko-consult' requires this file, and loads only where Consult is
 ;; installed, so it can be neither required nor assumed here
-(declare-function slacko-consult-search "slacko-consult")
+(declare-function slacko-consult--search "slacko-consult")
 
 ;;; Customizable Variables
 
@@ -104,9 +112,10 @@ URL should be an https:// Slack link."
              (eq system-type 'darwin))
     (run-at-time slacko-close-tab-delay nil
                  (lambda ()
-                   (let ((jxa-script (format "Application('%s').windows[0].activeTab.close(); Application('Slack').activate();"
-                                             slacko-browser-name)))
-                     (shell-command (format "osascript -l JavaScript -e \"%s\"" jxa-script)))))))
+                   (call-process
+                    "osascript" nil nil nil "-l" "JavaScript" "-e"
+                    (format "Application(%S).windows[0].activeTab.close(); Application('Slack').activate();"
+                            slacko-browser-name))))))
 
 (defun slacko--message-permalink-p (path)
   "Return non-nil if PATH points to a Slack message permalink.
@@ -169,7 +178,7 @@ automatically runs `slacko-creds-refresh' and retries."
   (let ((hosts (slacko--available-hosts)))
     (cond
      ((null hosts)
-      (error "No Slack workspaces found. Run `slacko-creds-refresh'"))
+      (user-error "No Slack workspaces found.  Run `slacko-creds-refresh'"))
      ((= (length hosts) 1)
       (car hosts))
      (t
@@ -181,7 +190,7 @@ Uses `slacko-default-host' if set, otherwise discovers the first
 workspace from the credentials file."
   (or slacko-default-host
       (car (slacko--available-hosts))
-      (error "No Slack workspace found. Run `slacko-creds-refresh' or set `slacko-default-host'")))
+      (user-error "No Slack workspace found.  Run `slacko-creds-refresh' or set `slacko-default-host'")))
 
 (defvar slacko--current-host nil
   "The workspace host used for the current search session.")
@@ -287,62 +296,58 @@ If APPEND is non-nil, append to existing results."
          (paging (alist-get 'paging messages-data))
          (page (alist-get 'page paging))
          (pages (alist-get 'pages paging)))
-    ;; (message "DEBUG: ok=%s, matches count=%s, total=%s" ok (length matches) total)
     (if (not ok)
         (message "Slack search failed: %s" (alist-get 'error response))
-
       (let ((buffer (get-buffer-create slacko-search-buffer-name)))
         (with-current-buffer buffer
-        (let ((saved-point (when append (point)))
-              (saved-window-start (when append
-                                    (and (get-buffer-window (current-buffer))
-                                         (window-start (get-buffer-window (current-buffer))))))
-              (pending nil))
-          
-          (unless append
-            (slacko-reactions-reset)
+          (let ((saved-point (when append (point)))
+                (saved-window-start
+                 (when append
+                   (and (get-buffer-window (current-buffer))
+                        (window-start (get-buffer-window (current-buffer))))))
+                (pending nil))
+            (unless append
+              (slacko-reactions-reset)
+              (let ((inhibit-read-only t))
+                (erase-buffer)
+                (insert (format "#+TITLE: Slack Search Results for: %s\n"
+                                slacko--current-query))
+                (insert (format "#+DATE: %s\n\n" (format-time-string "%F %T")))
+                (insert (format "Total results: %d\n\n" (or total 0)))))
+
             (let ((inhibit-read-only t))
-              (erase-buffer)
-              (insert (format "#+TITLE: Slack Search Results for: %s\n" slacko--current-query))
-              (insert (format "#+DATE: %s\n\n" (format-time-string "%Y-%m-%d %H:%M:%S")))
-              (insert (format "Total results: %d\n\n" (or total 0)))))
-          
-          (let ((inhibit-read-only t))
-            (goto-char (point-max))
-            (dolist (match matches)
-              (push (slacko--render-match match) pending))
-            
-            ;; Indent the entire buffer properly
-            (indent-region (point-min) (point-max)))
-          
-          (setq slacko--current-page page
-                slacko--total-pages pages)
-          
-          ;; Restore position when appending, otherwise set up the buffer
-          (if append
-              (progn
-                (when saved-point (goto-char saved-point))
-                (when saved-window-start
-                  (set-window-start (get-buffer-window (current-buffer)) saved-window-start)))
-            ;; Set host for workspace emoji resolution before enabling
-            ;; the mode, so slacko-emoji-mode can fetch custom emojis
-            (setq slacko-emoji--buffer-host
-                  (or slacko--current-host (slacko--default-host)))
-            (unless (eq major-mode 'slacko-search-mode)
-              (slacko-search-mode))
-            (goto-char (point-min)))
-          
-          ;; After the major mode, which wipes buffer-local state
-          (dolist (entry (delq nil (nreverse pending)))
-            (apply #'slacko-reactions-register entry))
-          (slacko-reactions-setup)
-          
-          ;; Load next page if available, but only after appending results
-          ;; For the first page, don't auto-load to avoid race conditions
-          (when (and append (< page pages))
-            (slacko--load-next-page))))
-        
-        ;; Switch to buffer AFTER all processing is complete
+              (goto-char (point-max))
+              (dolist (match matches)
+                (push (slacko--render-match match) pending))
+              (indent-region (point-min) (point-max)))
+
+            (setq slacko--current-page page
+                  slacko--total-pages pages)
+
+            (if append
+                (progn
+                  (when saved-point (goto-char saved-point))
+                  (when saved-window-start
+                    (set-window-start (get-buffer-window (current-buffer))
+                                      saved-window-start)))
+              ;; before the major mode, so `slacko-emoji-mode' knows
+              ;; whose custom emojis to fetch when it turns itself on
+              (setq slacko-render-host
+                    (or slacko--current-host (slacko--default-host)))
+              (unless (derived-mode-p 'slacko-search-mode)
+                (slacko-search-mode))
+              (goto-char (point-min)))
+
+            ;; after the major mode, which wipes buffer-local state
+            (dolist (entry (delq nil (nreverse pending)))
+              (apply #'slacko-reactions-register entry))
+            (slacko-reactions-setup)
+
+            ;; the first page does not auto-load: the buffer it would
+            ;; append to is still being built
+            (when (and append (< page pages))
+              (slacko--load-next-page))))
+
         (unless append
           (switch-to-buffer buffer)
           (set-window-start (selected-window) (point-min)))))))
@@ -362,25 +367,23 @@ If APPEND is non-nil, append to existing results."
 (defvar slacko-search-mode-map
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map org-mode-map)
-    (define-key map (kbd "C-c o") #'slacko-open-in-slack)
+    ;; the buffer is read-only, so RET is free to take over the job
+    ;; `C-c C-o' does in org, which this mode needs the key for
+    (define-key map (kbd "RET") #'org-open-at-point)
+    (define-key map (kbd "C-c C-o") #'slacko-open-in-slack)
     map)
   "Keymap for `slacko-search-mode'.")
 
 (define-derived-mode slacko-search-mode org-mode "Slack-Search"
   "Major mode for displaying Slack search results.
 
-This mode is derived from `org-mode' and displays search results
-from Slack in an organized, readable format.  Each result includes
-author, channel, timestamp, and message content with proper formatting.
+Derived from `org-mode'.  Each result is a heading carrying the
+author, the conversation, the timestamp and the message body.
 
 \\{slacko-search-mode-map}"
   (setq buffer-read-only t)
   (slacko-render-setup-font-lock)
-  ;; emojify checked first: slacko-emoji hard-requires it, and a bare
-  ;; NOERROR require would still signal from that inner require.
-  (when (and (require 'emojify nil t)
-             (require 'slacko-emoji nil t))
-    (slacko-emoji--maybe-enable)))
+  (slacko-render-setup-emoji))
 
 ;;; Interactive Commands
 
@@ -417,7 +420,7 @@ it, the query is read first and the results are displayed in an
   (interactive
    (list nil (when current-prefix-arg (slacko--prompt-host))))
   (if (slacko--consult-available-p)
-      (slacko-consult-search query host)
+      (slacko-consult--search query host)
     (slacko--search-buffer (or query (read-string "Search Slack: ")) host)))
 
 (provide 'slacko)

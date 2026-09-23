@@ -1,11 +1,11 @@
 ;;; slacko-creds-tests.el --- tests for slacko-creds -*- lexical-binding: t; -*-
 ;;
-;; Copyright (C) 2025 Ag Ibragimov
+;; Copyright (C) 2025-2026 Ag Ibragimov
 ;;
 ;; Author: Ag Ibragimov <agzam.ibragimov@gmail.com>
 ;; Maintainer: Ag Ibragimov <agzam.ibragimov@gmail.com>
 ;; Keywords: tools tests
-;; Homepage: https://github.com/agzam/slacko
+;; Homepage: https://github.com/agzam/slacko.el
 ;;
 ;; This file is not part of GNU Emacs.
 ;;

@@ -1,13 +1,13 @@
 ;;; slacko-render.el --- Unified message rendering for Slacko -*- lexical-binding: t; -*-
 ;;
-;; Copyright (C) 2025 Ag Ibragimov
+;; Copyright (C) 2025-2026 Ag Ibragimov
 ;;
 ;; Author: Ag Ibragimov <agzam.ibragimov@gmail.com>
+;; Assisted-by: Claude:claude-opus-5
 ;; Maintainer: Ag Ibragimov <agzam.ibragimov@gmail.com>
 ;; Created: February 19, 2026
-;; Version: 0.0.1
-;; Keywords: tools
-;; Homepage: https://github.com/agzam/slacko
+;; Keywords: comm tools
+;; Homepage: https://github.com/agzam/slacko.el
 ;;
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 ;;
@@ -24,9 +24,28 @@
 ;;; Code:
 
 (require 'url)
-(require 'json)
 (require 'slacko-mrkdwn)
 (require 'slacko-creds)
+
+;; emojify is optional, and `slacko-emoji' hard-requires it
+(declare-function slacko-emoji--maybe-enable "slacko-emoji")
+
+;;; Buffer State
+
+(defvar-local slacko-render-host nil
+  "Slack workspace the current buffer was rendered from.")
+
+;; the display functions set the host before the major-mode call, and
+;; `kill-all-local-variables' would otherwise wipe it before the mode
+;; body runs
+(put 'slacko-render-host 'permanent-local t)
+
+;;; Faces
+
+(defface slacko-render-reaction-count
+  '((t :height 0.7 :inherit default))
+  "Face for the count superscript next to a reaction emoji."
+  :group 'slacko)
 
 ;;; Customizable Variables
 
@@ -216,7 +235,7 @@ If HOST is nil or credentials unavailable, return TEXT unchanged."
 
 (defun slacko-render--image-url-for-file (file)
   "Return the best thumbnail URL for FILE, or nil if not an image.
-Prefers thumb_480, falls back to thumb_360, then url_private."
+Prefers the 480px thumbnail, then 360, then 720, then the private URL."
   (let ((mimetype (alist-get 'mimetype file)))
     (when (and mimetype (string-prefix-p "image/" mimetype))
       (or (alist-get 'thumb_480 file)
@@ -334,12 +353,14 @@ Returns nil when channel info is not available."
   (when reactions
     (insert (mapconcat
              (lambda (r)
-               (let ((count-str (number-to-string (alist-get 'count r))))
-                                   (concat
-                                   (format ":%s:" (alist-get 'name r))
-                                   (propertize (concat "\u200B" count-str)
-                              'display `(raise 0.3)
-                              'face 'slacko-emoji-count))))
+               (concat
+                (format ":%s:" (alist-get 'name r))
+                ;; zero-width space so the raised digits do not glue
+                ;; themselves onto the shortcode
+                (propertize (concat "\u200B"
+                                    (number-to-string (alist-get 'count r)))
+                            'display '(raise 0.3)
+                            'face 'slacko-render-reaction-count)))
              reactions "  ")
             "\n")))
 
@@ -450,8 +471,19 @@ callers that fetch reactions after the message is on screen."
 Call this from mode definitions."
   (font-lock-add-keywords nil slacko-mrkdwn-font-lock-keywords))
 
+(defun slacko-render-setup-emoji ()
+  "Turn on emoji rendering in this buffer, where emojify is installed.
+Call this from mode definitions."
+  ;; emojify checked first: `slacko-emoji' hard-requires it, and a bare
+  ;; NOERROR require would still signal from that inner require
+  (when (and (require 'emojify nil t)
+             (require 'slacko-emoji nil t))
+    (slacko-emoji--maybe-enable)))
+
 (provide 'slacko-render)
+
 ;; Local Variables:
 ;; package-lint-main-file: "slacko.el"
 ;; End:
+
 ;;; slacko-render.el ends here

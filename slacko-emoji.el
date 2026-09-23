@@ -1,13 +1,15 @@
 ;;; slacko-emoji.el --- Emoji overlay support for slacko -*- lexical-binding: t; -*-
 ;;
-;; Copyright (C) 2025 Ag Ibragimov
+;; Copyright (C) 2025-2026 Ag Ibragimov
 ;;
 ;; Author: Ag Ibragimov <agzam.ibragimov@gmail.com>
+;; Assisted-by: Claude:claude-opus-5
 ;; Maintainer: Ag Ibragimov <agzam.ibragimov@gmail.com>
-;; Created: February 19, 2025
-;; Keywords: tools
-;; Homepage: https://github.com/agzam/slacko
-;; Package-Requires: ((emacs "29.4") (emojify "1.0"))
+;; Created: February 19, 2026
+;; Keywords: comm tools
+;; Homepage: https://github.com/agzam/slacko.el
+;;
+;; SPDX-License-Identifier: GPL-3.0-or-later
 ;;
 ;; This file is not part of GNU Emacs.
 ;;
@@ -25,12 +27,22 @@
 ;; properties are used instead.  When the cursor is on an emoji overlay,
 ;; the original shortcode is revealed (org-appear style).
 ;;
+;; emojify is not a dependency of the package.  A Slacko buffer turns
+;; this mode on only where emojify is installed, see
+;; `slacko-render-setup-emoji', and without it every shortcode stays as
+;; the text Slack sent.
+;;
 ;;; Code:
 
-(require 'emojify)
 (require 'url)
 (require 'url-vars)
 (require 'slacko-creds)
+(require 'slacko-render)
+(require 'emojify nil t)
+
+;; emojify is optional, so it cannot be required outright
+(declare-function emojify-create-emojify-emojis "emojify")
+(defvar emojify-emojis)
 
 (defgroup slacko-emoji nil
   "Emoji rendering for slacko buffers."
@@ -40,24 +52,8 @@
 (defvar-local slacko-emoji--revealed-overlays nil
   "List of overlays currently revealed (showing shortcode text).")
 
-(defvar-local slacko-emoji--buffer-host nil
-  "The Slack workspace host for the current buffer.
-Set by the rendering pipeline so the emoji resolver knows which
-workspace's custom emojis to use.")
-
-;; Must survive the major-mode change: the display functions set the
-;; host before enabling the mode, and `kill-all-local-variables'
-;; would otherwise wipe it before the mode body runs.
-(put 'slacko-emoji--buffer-host 'permanent-local t)
-
-(defface slacko-emoji-count
-  '((t :height 0.7 :inherit default))
-  "Face for reaction count superscripts next to emoji."
-  :group 'slacko-emoji)
-
 (defcustom slacko-emoji-cache-directory
-  (expand-file-name "slacko-emoji" (or (bound-and-true-p doom-cache-dir)
-                                       user-emacs-directory))
+  (expand-file-name "slacko-emoji" user-emacs-directory)
   "Directory for caching downloaded workspace emoji images."
   :type 'directory
   :group 'slacko-emoji)
@@ -198,7 +194,7 @@ BEG should include the leading space so it gets replaced by a thin space."
     (overlay-put ov 'category 'slacko-emoji)
     (overlay-put ov 'display
                  (propertize (concat "\u200B" count-str) ;; zero-width space + digits
-                             'face 'slacko-emoji-count
+                             'face 'slacko-render-reaction-count
                              'display '(raise 0.3)))
     (overlay-put ov 'slacko-emoji-count t)
     (overlay-put ov 'evaporate t)
@@ -208,7 +204,7 @@ BEG should include the leading space so it gets replaced by a thin space."
   "Scan region from BEG to END for :shortcode: patterns and place emoji overlays.
 When a shortcode is followed by a space and a number (reaction count),
 the count is rendered as superscript.
-Uses `slacko-emoji--buffer-host' for resolving workspace custom emojis."
+Uses `slacko-render-host' for resolving workspace custom emojis."
   (when (hash-table-p emojify-emojis)
     (save-excursion
       (goto-char beg)
@@ -216,7 +212,7 @@ Uses `slacko-emoji--buffer-host' for resolving workspace custom emojis."
         (let* ((shortcode (match-string 1))
                (mb (match-beginning 1))
                (me (match-end 1))
-               (display (slacko-emoji--resolve shortcode slacko-emoji--buffer-host)))
+               (display (slacko-emoji--resolve shortcode slacko-render-host)))
           (when (and display
                      ;; don't double-overlay
                      (not (seq-some (lambda (ov)
@@ -258,7 +254,7 @@ Only reveals emoji overlays, not count overlays."
   "Re-conceal overlay OV, restoring its emoji display."
   (when ov
     (when-let* ((shortcode (overlay-get ov 'slacko-emoji-shortcode))
-                (display (slacko-emoji--resolve shortcode slacko-emoji--buffer-host)))
+                (display (slacko-emoji--resolve shortcode slacko-render-host)))
       (overlay-put ov 'display display))
     (setq slacko-emoji--revealed-overlays
           (delq ov slacko-emoji--revealed-overlays))))
@@ -310,14 +306,17 @@ an emoji (org-appear style)."
   :group 'slacko-emoji
   (if slacko-emoji-mode
       (progn
+        (unless (require 'emojify nil t)
+          (setq slacko-emoji-mode nil)
+          (user-error "Emoji display needs the emojify package"))
         ;; ensure emojify data is loaded
         (unless (and (boundp 'emojify-emojis)
                      (hash-table-p emojify-emojis)
                      (> (hash-table-count emojify-emojis) 0))
           (emojify-create-emojify-emojis))
         ;; fetch workspace custom emojis if we know the host
-        (when slacko-emoji--buffer-host
-          (slacko-emoji--fetch-workspace-emojis slacko-emoji--buffer-host))
+        (when slacko-render-host
+          (slacko-emoji--fetch-workspace-emojis slacko-render-host))
         (slacko-emoji--emojify-buffer)
         (add-hook 'post-command-hook #'slacko-emoji--post-command nil t)
         (add-hook 'after-change-functions #'slacko-emoji--after-change nil t))
@@ -333,4 +332,9 @@ an emoji (org-appear style)."
     (slacko-emoji-mode 1)))
 
 (provide 'slacko-emoji)
+
+;; Local Variables:
+;; package-lint-main-file: "slacko.el"
+;; End:
+
 ;;; slacko-emoji.el ends here
