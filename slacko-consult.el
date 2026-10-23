@@ -552,10 +552,16 @@ buffer-local, e.g. set through vertico-multiform, is respected."
   "W" #'slacko-consult-copy-text)
 
 (defun slacko-consult-embark-export (candidates)
-  "Render CANDIDATES into a `slacko-search-mode' buffer."
+  "Render CANDIDATES into a `slacko-search-mode' buffer.
+`embark-export' renames, then switches to, the buffer that is current
+when its exporter returns, so this leaves the rendered buffer current.
+Otherwise Embark renames whatever buffer it was called from, leaving an
+empty `*Embark Export: ...*' behind and the results nowhere in sight."
   (let* ((matches (delq nil (mapcar #'slacko-consult--match candidates)))
-         (host (plist-get (slacko-consult--message (car candidates)) :host)))
-    (slacko-consult--render-buffer slacko-search-buffer-name matches host t)))
+         (host (plist-get (slacko-consult--message (car candidates)) :host))
+         (buffer (slacko-consult--render-buffer slacko-search-buffer-name
+                                                 matches host t)))
+    (set-buffer buffer)))
 
 (defun slacko-consult--embark-setup ()
   "Give the `slacko-consult-result' category to Embark, where it is installed.
