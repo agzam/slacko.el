@@ -117,7 +117,7 @@ outlives its request can tell that nobody wants it.")
        (concat "@" (or (slacko-render--non-empty name)
                        (slacko-render-cached-user host id)
                        id))))
-   text))
+   text nil 'literal))
 
 (defun slacko-consult--channel-mentions (text)
   "Replace channel mentions in TEXT with their names."
@@ -127,7 +127,7 @@ outlives its request can tell that nobody wants it.")
      (let ((id (match-string 1 match))
            (name (match-string 2 match)))
        (concat "#" (or (slacko-render--non-empty name) id))))
-   text))
+   text nil 'literal))
 
 (defun slacko-consult--broadcasts (text)
   "Replace Slack's broadcast and group mentions in TEXT with plain names."
@@ -138,7 +138,7 @@ outlives its request can tell that nobody wants it.")
            (label (match-string 2 match)))
        (or (slacko-render--non-empty label)
            (concat "@" (car (split-string keyword "\\^"))))))
-   text))
+   text nil 'literal))
 
 (defun slacko-consult--links (text)
   "Replace links in TEXT with their label, or the URL when unlabelled."
@@ -147,7 +147,7 @@ outlives its request can tell that nobody wants it.")
    (lambda (match)
      (or (slacko-render--non-empty (match-string 2 match))
          (match-string 1 match)))
-   text))
+   text nil 'literal))
 
 (defun slacko-consult--plain-text (text host)
   "TEXT of a message on HOST, reduced to one plain line.
