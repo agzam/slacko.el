@@ -591,7 +591,17 @@ USERNAME is what Slack calls the author."
         (expect major-mode :to-be 'slacko-search-mode)
         (expect (buffer-string) :to-match "hello there")
         (expect (buffer-string) :to-match "second message")
-        (expect (length slacko-reactions--entries) :to-equal 2)))))
+        (expect (length slacko-reactions--entries) :to-equal 2))))
+
+  (it "leaves the rendered buffer current, the buffer embark renames"
+    (let ((slacko-render-resolve-mentions nil)
+          (candidates (list (slacko-consult--candidate
+                             (slacko-consult-tests--match)))))
+      (spy-on 'slacko-reactions-setup)
+      (with-current-buffer (get-buffer-create " slacko-test-origin")
+        (slacko-consult-embark-export candidates)
+        (expect major-mode :to-be 'slacko-search-mode)
+        (expect (buffer-name) :to-equal slacko-search-buffer-name)))))
 
 ;; Local Variables:
 ;; package-lint-main-file: "slacko.el"
