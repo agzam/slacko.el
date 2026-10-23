@@ -82,6 +82,11 @@ test's message."
     (expect (slacko-consult--plain-text "<https://x.com>" "team.slack.com")
             :to-equal "https://x.com"))
 
+  (it "keeps backslashes in message text, they are not escapes"
+    (expect (slacko-consult--plain-text
+             "log <https://ci|x\\y\\1z> end" "team.slack.com")
+            :to-equal "log x\\y\\1z end"))
+
   (it "decodes the entities Slack escapes"
     (expect (slacko-consult--plain-text "a &lt;b&gt; &amp; c" "team.slack.com")
             :to-equal "a <b> & c"))
