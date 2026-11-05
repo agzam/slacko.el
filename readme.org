@@ -60,11 +60,13 @@ Two things are needed per workspace:
 
 You never have to find either by hand. ~M-x slacko-creds-refresh~ digs both out of the Slack desktop app:
 
-- every workspace you are signed into is discovered from Slack's IndexedDB files
+- every workspace you are signed into is read from the app's own list, =storage/root-state.json=, with its IndexedDB files as the fallback
 - the ~d~ cookie is decrypted out of Slack's Cookies database, with the key from the macOS Keychain - expect a Keychain prompt, don't freak out
 - each workspace's ~xoxc-~ token is read off its own HTML page, using that cookie
 
-The result is written to ~slacko-creds-gpg-file~ (=~/.emacs.d/.slacko-creds.gpg= by default), GPG-encrypted, in ~netrc~ format, and everything else reads it through ~auth-source~. When a search finds no credentials it runs the refresh itself, at most once a minute, so in practice you never call it.
+The result is written to ~slacko-creds-gpg-file~ (=~/.emacs.d/.slacko-creds.gpg= by default), GPG-encrypted, in ~netrc~ format, and everything else reads it through ~auth-source~. A refresh renews every workspace already in that file too, along with the one a link points to: the app lists an Enterprise Grid org under its own host, =acme.enterprise.slack.com=, and not the workspaces inside it.
+
+You rarely call it yourself. When a request finds no credentials, or Slack rejects the ones it sent, slacko runs the refresh, at most once a minute, and sends the request once more. Rejection happens whenever the Slack app signs in again: every token of the old session dies with it.
 
 #+begin_src emacs-lisp
 (setq slacko-creds-gpg-file "~/.secrets/slacko.gpg")  ; where to cache

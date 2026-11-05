@@ -3,6 +3,12 @@
 
 All notable changes to this project will be documented in this file.
 
+* [Unreleased]
+** Fixed
+- Requests failed with ~invalid_auth~ once the Slack app signed in again, since every token of the old session dies with it and nothing renewed them.  A request Slack rejects for its credentials now refreshes them, at most once a minute, and goes out once more
+- ~slacko-creds-refresh~ missed the workspaces of an Enterprise Grid org, which the Slack app no longer names in IndexedDB.  Workspaces are read from the app's =storage/root-state.json= first, and a refresh also renews every workspace already in the credentials file, and the one a link points to
+- The session cookie is only ever sent to a ~*.slack.com~ host, whatever host a pasted link names
+
 * [1.4.0] - 2026-09-22
 ** Changed (breaking)
 - ~C-c o~ is gone from both mode maps.  ~C-c LETTER~ is reserved for users, and a package taking one is an error to ~package-lint~.  ~RET~ now follows the link at point, which is what ~C-c C-o~ did in these read-only org buffers, and ~C-c C-o~ forces the Slack desktop app
