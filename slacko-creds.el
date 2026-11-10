@@ -413,8 +413,8 @@ automatically runs `slacko-creds-refresh' and retries."
 
 (defun slacko-creds--api-url (endpoint params)
   "URL of Slack API ENDPOINT carrying the query PARAMS alist."
-  (format "https://slack.com/api/%s?%s"
-          endpoint (url-build-query-string params)))
+  (concat "https://slack.com/api/" endpoint
+          (when params (concat "?" (url-build-query-string params)))))
 
 (defun slacko-creds--read-response ()
   "Parse the JSON body of the HTTP response in the current buffer.
@@ -454,15 +454,22 @@ refresh at most once a minute, are still the ones Slack rejected."
       (unless (equal fresh headers)
         fresh))))
 
-(defun slacko-creds--get (endpoint params headers)
-  "Send a GET to Slack API ENDPOINT with query PARAMS and request HEADERS.
-Returns the parsed JSON response or nil."
-  (let* ((url-request-method "GET")
-         (url-request-extra-headers headers)
+(defun slacko-creds--send (endpoint params headers &optional post)
+  "Send PARAMS to Slack API ENDPOINT with request HEADERS.
+A GET carries them in the URL; with POST they go in a form body, which
+is how Slack's methods that write take them.  Returns the parsed JSON
+response or nil."
+  (let* ((url-request-method (if post "POST" "GET"))
+         (url-request-extra-headers
+          (if post
+              (cons '("Content-Type" . "application/x-www-form-urlencoded")
+                    (assoc-delete-all "Content-Type" (copy-alist headers)))
+            headers))
+         (url-request-data (when post (url-build-query-string params)))
          (url-cookie-storage nil)
          (url-cookie-secure-storage nil)
          (buf (url-retrieve-synchronously
-               (slacko-creds--api-url endpoint params) t nil 15)))
+               (slacko-creds--api-url endpoint (unless post params)) t nil 15)))
     (when buf
       (unwind-protect
           (with-current-buffer buf
@@ -489,16 +496,15 @@ failed.  Returns the request buffer."
          (funcall callback data)))
      nil t t)))
 
-(defun slacko-creds-api-request (host endpoint params)
-  "Make a synchronous authenticated Slack API request.
-HOST is the workspace domain (e.g. \"foo.slack.com\").
-ENDPOINT is the API method (e.g. \"users.info\").
-PARAMS is an alist of query parameters.
-Returns parsed JSON response or nil."
+(defun slacko-creds-api-request (host endpoint params &optional post)
+  "Make a synchronous authenticated request to Slack API ENDPOINT on HOST.
+HOST is a workspace domain such as \"foo.slack.com\", ENDPOINT a method
+such as \"users.info\", PARAMS an alist of parameters, sent as a form
+body when POST is non-nil.  Returns the parsed JSON response or nil."
   (let* ((headers (slacko-creds--auth-headers host))
-         (response (slacko-creds--get endpoint params headers)))
+         (response (slacko-creds--send endpoint params headers post)))
     (if-let* ((renewed (slacko-creds--renewed-headers host headers response)))
-        (slacko-creds--get endpoint params renewed)
+        (slacko-creds--send endpoint params renewed post)
       response)))
 
 (defun slacko-creds-api-request-async (host endpoint params callback)

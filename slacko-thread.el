@@ -25,6 +25,7 @@
 (require 'seq)
 (require 'thingatpt)
 (require 'slacko-creds)
+(require 'slacko-mrkdwn)
 (require 'slacko-render)
 
 ;; `slacko' requires this file, so it can only be declared here
@@ -141,6 +142,12 @@ LEVEL is the org heading level (1 or 2)."
 (defvar-local slacko-thread--id nil
   "Which thread this buffer holds: host, conversation and parent timestamp.")
 
+(defvar-local slacko-thread--draft nil
+  "Marker at the heading of the reply drafted in this buffer, or nil.")
+
+(defvar-local slacko-thread--saved-header-line nil
+  "The `header-line-format' a reply draft took the place of.")
+
 (defun slacko-thread--buffer-name (label)
   "Name of a thread buffer showing LABEL.
 Keeps the shape of `slacko-thread-buffer-name', which is normally
@@ -174,6 +181,9 @@ HOST is the workspace domain.  CHANNEL-ID and URL are for context."
          (buf (slacko-thread--buffer label id))
          (parent (car messages))
          (replies (cdr messages)))
+    (when (buffer-local-value 'slacko-thread--draft buf)
+      (switch-to-buffer buf)
+      (user-error "Post or drop the reply drafted in this thread first"))
     (with-current-buffer buf
       (let ((inhibit-read-only t))
         (erase-buffer)
@@ -206,6 +216,7 @@ HOST is the workspace domain.  CHANNEL-ID and URL are for context."
     ;; `C-c C-o' does in org, which this mode needs the key for
     (define-key map (kbd "RET") #'org-open-at-point)
     (define-key map (kbd "C-c C-o") #'slacko-open-in-slack)
+    (define-key map (kbd "C-c C-r") #'slacko-thread-reply)
     map)
   "Keymap for `slacko-thread-mode'.")
 
@@ -253,6 +264,145 @@ If it's a standalone message, just that message is shown."
           (if single
               (slacko-thread--display single host channel-id url)
             (user-error "Could not fetch message from %s" url)))))))
+
+;;; Replying
+
+(defvar slacko-thread-reply-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "C-c C-c") #'slacko-thread-reply-submit)
+    (define-key map (kbd "C-c C-k") #'slacko-thread-reply-abort)
+    map)
+  "Keymap of a thread buffer while it holds a reply draft.")
+
+(define-minor-mode slacko-thread-reply-mode
+  "Minor mode of a thread buffer while it holds a reply draft.
+\\{slacko-thread-reply-mode-map}"
+  :lighter " Reply"
+  :keymap slacko-thread-reply-mode-map)
+
+(defun slacko-thread--keyword (name)
+  "Value of the #+NAME line the thread buffer starts with."
+  ;; read as text: org parses #+SOURCE as a name for the next element
+  (save-excursion
+    (goto-char (point-min))
+    (when (re-search-forward (format "^#\\+%s: \\(.*\\)$" name) nil t)
+      (match-string-no-properties 1))))
+
+(defun slacko-thread--draft-body ()
+  "Where the text of the reply drafted in this buffer starts."
+  (save-excursion
+    (goto-char slacko-thread--draft)
+    (forward-line 1)
+    (point)))
+
+(defun slacko-thread--draft-text ()
+  "Text of the reply drafted in this buffer, trimmed."
+  (string-trim (buffer-substring-no-properties
+                (slacko-thread--draft-body) (point-max))))
+
+(defun slacko-thread--header-line ()
+  "Header line naming where the reply goes and the keys that end the draft."
+  (list (propertize (format " Reply in %s "
+                            (string-replace "%" "%%" (slacko-thread--keyword "TITLE")))
+                    'face '(:weight bold :inherit font-lock-function-name-face))
+        (propertize " │ " 'face 'shadow)
+        (propertize "C-c C-c" 'face '(:weight bold :inherit success))
+        (propertize " submit " 'face 'shadow)
+        (propertize "│ " 'face 'shadow)
+        (propertize "C-c C-k" 'face '(:weight bold :inherit error))
+        (propertize " abort" 'face 'shadow)))
+
+(defun slacko-thread--start-draft ()
+  "Add an empty reply after the last message, the only text left editable."
+  (let ((inhibit-read-only t))
+    (goto-char (point-max))
+    (setq slacko-thread--draft (point-marker))
+    (insert "** New reply\n"))
+  (with-silent-modifications
+    (put-text-property (point-min) (point) 'read-only t)
+    ;; so text typed before the first line inherits it, and is refused
+    (put-text-property (point-min) (1+ (point-min)) 'front-sticky '(read-only))
+    ;; so text typed below the heading does not inherit it
+    (put-text-property (1- (point)) (point) 'rear-nonsticky '(read-only)))
+  ;; the rendering's history would undo into read-only text
+  (setq buffer-undo-list nil
+        buffer-read-only nil
+        slacko-thread--saved-header-line header-line-format
+        header-line-format (slacko-thread--header-line))
+  (slacko-thread-reply-mode 1))
+
+(defun slacko-thread--end-draft ()
+  "Take the reply draft out of the buffer, which turns read-only again."
+  (let ((inhibit-read-only t))
+    (delete-region slacko-thread--draft (point-max)))
+  (with-silent-modifications
+    (remove-list-of-text-properties (point-min) (point-max) '(read-only front-sticky)))
+  (set-marker slacko-thread--draft nil)
+  (setq slacko-thread--draft nil
+        buffer-undo-list nil
+        buffer-read-only t
+        header-line-format slacko-thread--saved-header-line)
+  (slacko-thread-reply-mode -1))
+
+(defun slacko-thread--goto-message (ts)
+  "Move point to the heading of the message TS, when the buffer shows it."
+  (when-let* ((ts)
+              (found (save-excursion
+                       (goto-char (point-min))
+                       (search-forward (format "/p%s]" (string-replace "." "" ts))
+                                       nil t))))
+    (goto-char found)
+    (org-back-to-heading t)))
+
+(defun slacko-thread-reply ()
+  "Draft a reply at the end of this thread, in org markup.
+`slacko-thread-reply-submit' posts it as mrkdwn,
+`slacko-thread-reply-abort' drops it."
+  (interactive nil slacko-thread-mode)
+  (unless slacko-thread--id
+    (user-error "Not a Slack thread buffer"))
+  (if slacko-thread--draft
+      (progn
+        (goto-char (point-max))
+        (message "A reply is drafted here already"))
+    (slacko-thread--start-draft)
+    (message "Write the reply, then C-c C-c to post it")))
+
+(defun slacko-thread-reply-submit ()
+  "Post the reply drafted in this buffer to the thread, as mrkdwn.
+Once Slack takes it the draft goes, and the thread is fetched again."
+  (interactive nil slacko-thread-mode)
+  (unless slacko-thread--draft
+    (user-error "No reply drafted here"))
+  (let ((text (slacko-thread--draft-text)))
+    (when (string-empty-p text)
+      (user-error "The reply is empty"))
+    (message "Posting the reply...")
+    (pcase-let* ((`(,host ,channel ,ts) slacko-thread--id)
+                 (response (slacko-creds-api-request
+                            host "chat.postMessage"
+                            `((channel ,channel)
+                              (thread_ts ,ts)
+                              (text ,(slacko-mrkdwn-from-org text)))
+                            t)))
+      (cond ((null response)
+             (user-error "No answer from Slack, check the thread before posting again"))
+            ((not (eq (alist-get 'ok response) t))
+             (user-error "Slack refused the reply: %s" (alist-get 'error response))))
+      (slacko-thread--end-draft)
+      (slacko-thread-capture (slacko-thread--keyword "SOURCE"))
+      (slacko-thread--goto-message (alist-get 'ts response))
+      (message "Replied"))))
+
+(defun slacko-thread-reply-abort ()
+  "Drop the reply drafted in this buffer, asking first when it holds text."
+  (interactive nil slacko-thread-mode)
+  (unless slacko-thread--draft
+    (user-error "No reply drafted here"))
+  (when (or (string-empty-p (slacko-thread--draft-text))
+            (yes-or-no-p "Drop the reply? "))
+    (slacko-thread--end-draft)
+    (message "Reply dropped")))
 
 (provide 'slacko-thread)
 

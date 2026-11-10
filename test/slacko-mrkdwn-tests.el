@@ -265,6 +265,61 @@
       (expect result :to-match "#\\+begin_src")
       (expect result :to-match "if (a < b && b > c) {}"))))
 
+(describe "slacko-mrkdwn-from-org"
+  (it "turns org emphasis into Slack's"
+    (expect (slacko-mrkdwn-from-org "*b* /i/ _u_ +s+")
+            :to-equal "*b* _i_ _u_ ~s~"))
+
+  (it "turns code and verbatim into backticks"
+    (expect (slacko-mrkdwn-from-org "run ~make test~ or =make lint=")
+            :to-equal "run `make test` or `make lint`"))
+
+  (it "leaves alone what org does not read as markup"
+    (expect (slacko-mrkdwn-from-org "a*b*c snake_case 1+1+2 C++ ~/path x+y+")
+            :to-equal "a*b*c snake_case 1+1+2 C++ ~/path x+y+"))
+
+  (it "turns links into Slack's, with and without a description"
+    (expect (slacko-mrkdwn-from-org
+             "[[https://a.com][A]] [[https://b.com]] https://c.com [[mailto:x@y.z][mail]]")
+            :to-equal "<https://a.com|A> <https://b.com> <https://c.com> <mailto:x@y.z|mail>"))
+
+  (it "sends a slack: link as the https link it stands for"
+    (expect (slacko-mrkdwn-from-org "[[slack://team.slack.com/archives/C1/p1][here]]")
+            :to-equal "<https://team.slack.com/archives/C1/p1|here>"))
+
+  (it "keeps a link Slack cannot open as typed"
+    (expect (slacko-mrkdwn-from-org "see [[file:notes.org][notes]]")
+            :to-equal "see [[file:notes.org][notes]]"))
+
+  (it "turns a src block into a code block without its language"
+    (expect (slacko-mrkdwn-from-org "#+begin_src clojure\n(def a 1)\n,* x\n#+end_src\nafter")
+            :to-equal "```\n(def a 1)\n* x\n```\nafter"))
+
+  (it "turns a quote block into quoted lines"
+    (expect (slacko-mrkdwn-from-org "#+begin_quote\nfirst *b*\nsecond\n#+end_quote\ntail")
+            :to-equal "> first *b*\n> second\ntail"))
+
+  (it "turns a line break into a newline"
+    (expect (slacko-mrkdwn-from-org "one\\\\\ntwo")
+            :to-equal "one\ntwo"))
+
+  (it "escapes &, < and > in text and in code"
+    (expect (slacko-mrkdwn-from-org "a < b & c > d =x<y= &amp;")
+            :to-equal "a &lt; b &amp; c &gt; d `x&lt;y` &amp;amp;"))
+
+  (it "keeps lists, headings and paragraphs as typed"
+    (expect (slacko-mrkdwn-from-org "- one\n- two /x/\n\n* top\nlast")
+            :to-equal "- one\n- two _x_\n\n* top\nlast"))
+
+  (it "returns what `slacko-mrkdwn-to-org' reads back"
+    (let ((org "*b* ~c~ +s+ [[https://a.com][A]] & <x>"))
+      (expect (slacko-mrkdwn-to-org (slacko-mrkdwn-from-org org))
+              :to-equal org)))
+
+  (it "returns plain text without properties"
+    (expect (text-properties-at 0 (slacko-mrkdwn-from-org "plain words"))
+            :to-be nil)))
+
 ;; Local Variables:
 ;; package-lint-main-file: "slacko.el"
 ;; End:

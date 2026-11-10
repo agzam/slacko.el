@@ -28,6 +28,13 @@ Undecoded bytes in a unibyte buffer, headers separated by CRLF."
       (insert (encode-coding-string body 'utf-8)))
     buf))
 
+(defun slacko-creds-tests--form (data)
+  "Fields of the form body DATA, decoded, in the order they were sent."
+  (mapcar (lambda (field)
+            (pcase-let ((`(,key ,value) (split-string field "=")))
+              (list key (decode-coding-string (url-unhex-string value t) 'utf-8))))
+          (split-string data "&")))
+
 (describe "slacko-creds--api-url"
   (it "builds the endpoint URL with query parameters"
     (expect (slacko-creds--api-url "search.messages" '((query "hello") (page "1")))
@@ -41,7 +48,11 @@ Undecoded bytes in a unibyte buffer, headers separated by CRLF."
            (query (cadr (split-string url "[?]"))))
       (expect (string-match-p "[ #]" query) :to-be nil)
       (expect (url-unhex-string (cadr (split-string query "=")))
-              :to-equal "in:#dev a b"))))
+              :to-equal "in:#dev a b")))
+
+  (it "leaves the query out when there are no parameters"
+    (expect (slacko-creds--api-url "emoji.list" nil)
+            :to-equal "https://slack.com/api/emoji.list")))
 
 (describe "slacko-creds--auth-headers"
   (it "carries the token and the session cookie"
@@ -323,6 +334,66 @@ With JSON nil the directory has no such file."
               :to-equal "channel_not_found")
       (expect 'slacko-creds-refresh :not :to-have-been-called)
       (expect (length sent) :to-equal 1))))
+
+(describe "slacko-creds-api-request with POST"
+  :var (token responses sent)
+  (before-each
+    (setq token "xoxc-dead" sent nil)
+    (spy-on 'slacko-creds-get :and-call-fake
+            (lambda (_host kind) (if (equal kind "token") token "xoxd-1")))
+    (spy-on 'url-retrieve-synchronously :and-call-fake
+            (lambda (url &rest _)
+              (push (list :url url
+                          :method url-request-method
+                          :data url-request-data
+                          :headers url-request-extra-headers)
+                    sent)
+              (slacko-creds-tests--response-buffer (pop responses)))))
+
+  (it "sends the parameters as a form body, not in the URL"
+    (setq responses '("{\"ok\":true}"))
+    (slacko-creds-api-request "team.slack.com" "chat.postMessage"
+                              '((channel "C1") (text "café & <b>\nnext")) t)
+    (let ((request (car sent)))
+      (expect (plist-get request :method) :to-equal "POST")
+      (expect (plist-get request :url)
+              :to-equal "https://slack.com/api/chat.postMessage")
+      (expect (slacko-creds-tests--form (plist-get request :data))
+              :to-equal '(("channel" "C1") ("text" "café & <b>\nnext")))))
+
+  (it "declares the form once and keeps the credentials"
+    (setq responses '("{\"ok\":true}"))
+    (slacko-creds-api-request "team.slack.com" "chat.postMessage"
+                              '((channel "C1")) t)
+    (let ((headers (plist-get (car sent) :headers)))
+      (expect (seq-filter (lambda (h) (equal (car h) "Content-Type")) headers)
+              :to-equal '(("Content-Type" . "application/x-www-form-urlencoded")))
+      (expect (alist-get "Authorization" headers nil nil #'equal)
+              :to-equal "Bearer xoxc-dead")
+      (expect (alist-get "Cookie" headers nil nil #'equal)
+              :to-equal "d=xoxd-1;")))
+
+  (it "posts once more when Slack rejected the credentials"
+    (setq responses '("{\"ok\":false,\"error\":\"invalid_auth\"}" "{\"ok\":true}"))
+    (spy-on 'slacko-creds-refresh :and-call-fake
+            (lambda (&rest _) (setq token "xoxc-fresh")))
+    (let ((slacko-creds--last-refresh-time nil))
+      (expect (alist-get 'ok (slacko-creds-api-request
+                              "team.slack.com" "chat.postMessage" '((channel "C1")) t))
+              :to-be t)
+      (expect (mapcar (lambda (request) (plist-get request :method)) sent)
+              :to-equal '("POST" "POST"))
+      (expect (alist-get "Authorization" (plist-get (car sent) :headers) nil nil #'equal)
+              :to-equal "Bearer xoxc-fresh")))
+
+  (it "sends a GET with the parameters in the URL otherwise"
+    (setq responses '("{\"ok\":true}"))
+    (slacko-creds-api-request "team.slack.com" "users.info" '((user "U1")))
+    (let ((request (car sent)))
+      (expect (plist-get request :method) :to-equal "GET")
+      (expect (plist-get request :url)
+              :to-equal "https://slack.com/api/users.info?user=U1")
+      (expect (plist-get request :data) :to-be nil))))
 
 (describe "slacko-creds-api-request-async with rejected credentials"
   :var (token responses sent)

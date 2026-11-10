@@ -24,6 +24,7 @@
 ;;; Code:
 
 (require 'subr-x)
+(require 'org-element)
 
 ;;; Faces
 
@@ -193,6 +194,76 @@ Not yet implemented:
       ;; and blockquote conversion above consumed the literal "&gt; " lines.
       (slacko-mrkdwn--decode-entities
        (slacko-mrkdwn--convert-inline-code text-with-placeholders)))))
+
+;;; Org to mrkdwn
+
+(defun slacko-mrkdwn--escape (text)
+  "TEXT with the three characters Slack reads as markup escaped."
+  (replace-regexp-in-string
+   "[&<>]" (lambda (c) (pcase c ("&" "&amp;") ("<" "&lt;") (_ "&gt;")))
+   text t t))
+
+(defun slacko-mrkdwn--link-url (link)
+  "URL Slack opens for the org LINK, or nil when it opens none.
+A thread buffer writes Slack's own links as slack: links."
+  (let ((raw (org-element-property :raw-link link)))
+    (cond ((string-match-p "\\`\\(?:https?\\|mailto\\):" raw) raw)
+          ((string-prefix-p "slack:" raw) (concat "https:" (substring raw 6))))))
+
+(defun slacko-mrkdwn--from-org-node (node)
+  "Mrkdwn of NODE, an `org-element' node or string of the current buffer.
+What Slack has markup for is translated, the rest stays as typed."
+  (if (stringp node)
+      (slacko-mrkdwn--escape node)
+    (let* ((type (org-element-type node))
+           (inner (mapconcat #'slacko-mrkdwn--from-org-node
+                             (org-element-contents node) ""))
+           (blank (or (org-element-property :post-blank node) 0))
+           (spaces (make-string blank ?\s))
+           (lines (make-string blank ?\n))
+           (url (and (eq type 'link) (slacko-mrkdwn--link-url node))))
+      (pcase type
+        ('org-data inner)
+        ('bold (concat "*" inner "*" spaces))
+        ((or 'italic 'underline) (concat "_" inner "_" spaces))
+        ('strike-through (concat "~" inner "~" spaces))
+        ((or 'code 'verbatim)
+         (concat "`" (slacko-mrkdwn--escape (org-element-property :value node))
+                 "`" spaces))
+        ('line-break "\n")
+        ((guard url)
+         (concat "<" (slacko-mrkdwn--escape url)
+                 (unless (string-empty-p inner) (concat "|" inner))
+                 ">" spaces))
+        ((or 'src-block 'example-block)
+         ;; Slack shows a language name as the block's first line
+         (concat "```\n"
+                 (slacko-mrkdwn--escape
+                  (string-trim-right (org-element-property :value node) "\n"))
+                 "\n```\n" lines))
+        ('quote-block
+         (concat (replace-regexp-in-string "^" "> " (string-trim-right inner "\n"))
+                 "\n" lines))
+        (_ (let ((begin (org-element-property :begin node))
+                 (end (org-element-property :end node))
+                 (from (org-element-property :contents-begin node))
+                 (to (org-element-property :contents-end node)))
+             (if (and from to)
+                 (concat (slacko-mrkdwn--escape (buffer-substring-no-properties begin from))
+                         inner
+                         (slacko-mrkdwn--escape (buffer-substring-no-properties to end)))
+               (slacko-mrkdwn--escape (buffer-substring-no-properties begin end)))))))))
+
+(defun slacko-mrkdwn-from-org (text)
+  "Convert org TEXT to Slack mrkdwn, the reverse of `slacko-mrkdwn-to-org'.
+Org's own parser decides what is markup, so what org shows as code goes
+as code.  &, < and > are escaped, as Slack's API requires."
+  (with-temp-buffer
+    (delay-mode-hooks (org-mode))
+    (insert text)
+    (substring-no-properties
+     (string-trim-right
+      (slacko-mrkdwn--from-org-node (org-element-parse-buffer))))))
 
 (provide 'slacko-mrkdwn)
 
