@@ -6,7 +6,7 @@ MELPAZOID ?= $(HOME)/GitHub/riscy/melpazoid/melpazoid/melpazoid.el
 
 SOURCES := slacko-mrkdwn.el slacko-creds.el slacko-render.el \
 	slacko-reactions.el slacko.el slacko-thread.el slacko-emoji.el \
-	slacko-consult.el
+	slacko-consult.el slacko-jump.el
 
 SOURCES_EL := $(foreach f,$(SOURCES),\"$(f)\")
 
@@ -102,7 +102,7 @@ check-compile: | $(ELPA)
 	    --eval "(byte-compile-file \"$$f\")" || { rm -f *.elc; exit 1; }; \
 	done
 	@echo "Checking the optional integrations compile without their package..."
-	@for f in slacko-consult.el slacko-emoji.el; do \
+	@for f in slacko-consult.el slacko-jump.el slacko-emoji.el; do \
 	  $(EMACS) -L . \
 	    --eval "(setq byte-compile-error-on-warn t)" \
 	    --eval "(byte-compile-file \"$$f\")" || { rm -f *.elc; exit 1; }; \

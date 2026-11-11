@@ -23,6 +23,7 @@
 ;;
 ;;; Code:
 
+(require 'seq)
 (require 'url)
 (require 'slacko-mrkdwn)
 (require 'slacko-creds)
@@ -126,6 +127,28 @@ Results are cached.  Returns USER-ID if resolution fails."
               name)
           (error user-id)))))
 
+(defun slacko-render-fetch-users (host user-ids callback)
+  "Ask HOST for the names of USER-IDS at once, cache them, then call CALLBACK.
+CALLBACK runs when every request has answered, refused or failed."
+  (slacko-creds-async-all
+   (mapcar (lambda (id)
+             (lambda (done)
+               (slacko-creds-api-request-async host "users.info" `((user ,id)) done)))
+           user-ids)
+   (lambda (responses)
+     (seq-mapn (lambda (id data)
+                 (when (eq (alist-get 'ok data) t)
+                   (let* ((user (alist-get 'user data))
+                          (profile (alist-get 'profile user)))
+                     (slacko-render-cache-user
+                      host id (or (slacko-render--non-empty
+                                   (alist-get 'display_name profile))
+                                  (slacko-render--non-empty
+                                   (alist-get 'real_name profile))
+                                  (alist-get 'name user))))))
+               user-ids responses)
+     (funcall callback))))
+
 (defun slacko-render-resolve-user-mentions (host text)
   "Replace <@USER_ID> mentions in TEXT with display names for HOST.
 If HOST is nil or credentials unavailable, return TEXT unchanged."
@@ -158,6 +181,25 @@ enough to name it, which spares whoever opens one a
     (unless (gethash key slacko-render--channel-cache)
       (puthash key channel slacko-render--channel-cache))
     (gethash key slacko-render--channel-cache)))
+
+(defun slacko-render-cached-channel (host channel-id)
+  "The conversation CHANNEL-ID on HOST, if it is cached already, or nil."
+  (gethash (format "%s:%s" host channel-id) slacko-render--channel-cache))
+
+(defun slacko-render-fetch-channels (host channel-ids callback)
+  "Ask HOST to describe CHANNEL-IDS at once, cache them, then call CALLBACK.
+CALLBACK runs when every request has answered, refused or failed."
+  (slacko-creds-async-all
+   (mapcar (lambda (id)
+             (lambda (done)
+               (slacko-creds-api-request-async
+                host "conversations.info" `((channel ,id)) done)))
+           channel-ids)
+   (lambda (responses)
+     (dolist (data responses)
+       (when (eq (alist-get 'ok data) t)
+         (slacko-render-cache-channel host (alist-get 'channel data))))
+     (funcall callback))))
 
 (defun slacko-render-channel (host channel-id)
   "The conversation CHANNEL-ID on HOST, as Slack describes it, or nil.

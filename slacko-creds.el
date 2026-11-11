@@ -32,6 +32,7 @@
 (require 'cl-lib)
 (require 'json)
 (require 'password-cache)
+(require 'seq)
 (require 'url)
 (require 'url-vars)
 
@@ -87,29 +88,53 @@ Uses `slacko-creds-gpg-key' if set, otherwise auto-detects."
   "\\`[a-z0-9-]+\\(?:\\.[a-z0-9-]+\\)*\\.slack\\.com\\'"
   "Hosts the session cookie may be sent to.")
 
-(defun slacko-creds--root-state-hosts ()
-  "Hosts of the workspaces listed in the Slack app's storage/root-state.json.
-The url wins over the domain: an Enterprise Grid org lives at a host of
-its own, such as acme.enterprise.slack.com."
+(defun slacko-creds--root-state ()
+  "The Slack app's storage/root-state.json, parsed, or nil."
   (let ((file (expand-file-name "storage/root-state.json"
                                 slacko-creds-slack-data-dir)))
-    (when-let* (((file-readable-p file))
-                (state (condition-case nil
-                           (let ((json-object-type 'alist)
-                                 (json-key-type 'symbol)
-                                 (json-array-type 'list))
-                             (json-read-file file))
-                         ((json-error file-error) nil))))
-      (delq nil
-            (mapcar (lambda (entry)
-                      (let ((url (alist-get 'url (cdr entry)))
-                            (domain (alist-get 'domain (cdr entry))))
-                        (cond ((and (stringp url)
-                                    (string-match "\\`https?://\\([^/]+\\)" url))
-                               (match-string 1 url))
-                              ((stringp domain)
-                               (concat domain ".slack.com")))))
-                    (alist-get 'workspaces state))))))
+    (when (file-readable-p file)
+      (condition-case nil
+          (let ((json-object-type 'alist)
+                (json-key-type 'symbol)
+                (json-array-type 'list))
+            (json-read-file file))
+        ((json-error file-error) nil)))))
+
+(defun slacko-creds--workspace-host (workspace)
+  "Host of WORKSPACE, an entry of root-state.json's workspaces.
+The url wins over the domain: an Enterprise Grid org lives at a host of
+its own, such as acme.enterprise.slack.com."
+  (let ((url (alist-get 'url workspace))
+        (domain (alist-get 'domain workspace)))
+    (cond ((and (stringp url)
+                (string-match "\\`https?://\\([^/]+\\)" url))
+           (match-string 1 url))
+          ((stringp domain)
+           (concat domain ".slack.com")))))
+
+(defun slacko-creds--root-state-hosts ()
+  "Hosts of the workspaces listed in the Slack app's storage/root-state.json."
+  (seq-keep (lambda (entry) (slacko-creds--workspace-host (cdr entry)))
+            (alist-get 'workspaces (slacko-creds--root-state))))
+
+(defun slacko-creds--root-state-orgs ()
+  "The orgs the Slack app lists, the one selected in it first, as plists.
+Each has :id, :name and :host.  An Enterprise Grid org is one entry, at
+its own host, however many of its workspaces are signed in."
+  (let* ((state (slacko-creds--root-state))
+         (selected (alist-get 'selectedWorkspaceId
+                              (alist-get 'workspacesMeta state)))
+         (rank (pcase-lambda (`(,id . ,workspace))
+                 (let ((order (alist-get 'order workspace)))
+                   (cond ((equal (symbol-name id) selected) -1)
+                         ((numberp order) order)
+                         (t most-positive-fixnum))))))
+    (seq-keep (pcase-lambda (`(,id . ,workspace))
+                (when-let* ((host (slacko-creds--workspace-host workspace)))
+                  (list :id (symbol-name id)
+                        :name (or (alist-get 'name workspace) host)
+                        :host host)))
+              (seq-sort-by rank #'< (alist-get 'workspaces state)))))
 
 (defun slacko-creds--discover-workspaces ()
   "Hosts of the workspaces the Slack app is signed into.
@@ -528,6 +553,26 @@ wants the response can kill."
                      nil))))
            (slacko-creds--get-async endpoint params renewed callback)
          (funcall callback data))))))
+
+(defun slacko-creds-async-all (fns callback)
+  "Call each of FNS at once, then CALLBACK with their results, in order.
+Each of FNS takes the function to hand its result to, such as the
+callback of `slacko-creds-api-request-async'.  CALLBACK runs once,
+when the last result is in, and at once when FNS is empty."
+  (if (null fns)
+      (funcall callback nil)
+    (let ((results (make-vector (length fns) nil))
+          (pending (length fns)))
+      (seq-do-indexed
+       (lambda (fn index)
+         (funcall fn (lambda (result)
+                       (aset results index result)
+                       ;; results arrive one at a time and in any order,
+                       ;; so only a shared count can tell the last one
+                       (setq pending (1- pending))
+                       (when (= 0 pending)
+                         (funcall callback (append results nil))))))
+       fns))))
 
 (provide 'slacko-creds)
 

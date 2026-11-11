@@ -231,6 +231,70 @@
               :to-be nil)
       (expect (hash-table-count slacko-render--channel-cache) :to-equal 0))))
 
+(describe "slacko-render-cached-channel"
+  (it "returns what is cached and asks nobody for the rest"
+    (let ((slacko-render--channel-cache (make-hash-table :test 'equal)))
+      (spy-on 'slacko-creds-api-request)
+      (slacko-render-cache-channel "host" '((id . "C123") (name . "general")))
+      (expect (slacko-render-cached-channel "host" "C123")
+              :to-equal '((id . "C123") (name . "general")))
+      (expect (slacko-render-cached-channel "host" "C999") :to-be nil)
+      (expect 'slacko-creds-api-request :not :to-have-been-called))))
+
+(defun slacko-render-tests--answering (responses)
+  "Spy `slacko-creds-api-request-async' to answer each request from RESPONSES.
+RESPONSES maps a parameter value, such as a channel id, to the answer."
+  (spy-on 'slacko-creds-api-request-async :and-call-fake
+          (lambda (_host _endpoint params callback)
+            (funcall callback (cdr (assoc (cadr (car params)) responses))))))
+
+(describe "slacko-render-fetch-channels"
+  (it "asks for every conversation at once and caches what Slack describes"
+    (let ((slacko-render--channel-cache (make-hash-table :test 'equal))
+          (continued nil))
+      (slacko-render-tests--answering
+       '(("C1" . ((ok . t) (channel . ((id . "C1") (name . "general")))))
+         ("C2" . ((ok . :json-false) (error . "channel_not_found")))))
+      (slacko-render-fetch-channels "host" '("C1" "C2")
+                                    (lambda () (setq continued t)))
+      (expect continued :to-be t)
+      (expect (spy-calls-count 'slacko-creds-api-request-async) :to-equal 2)
+      (expect (nth 1 (spy-calls-args-for 'slacko-creds-api-request-async 0))
+              :to-equal "conversations.info")
+      (expect (slacko-render-resolve-channel "host" "C1") :to-equal "general")
+      (expect (slacko-render-cached-channel "host" "C2") :to-be nil)))
+
+  (it "continues at once when there is nothing to ask"
+    (let ((continued nil))
+      (spy-on 'slacko-creds-api-request-async)
+      (slacko-render-fetch-channels "host" nil (lambda () (setq continued t)))
+      (expect continued :to-be t)
+      (expect 'slacko-creds-api-request-async :not :to-have-been-called))))
+
+(describe "slacko-render-fetch-users"
+  (it "prefers the display name, then the real name, then the user name"
+    (let ((slacko-render--user-cache (make-hash-table :test 'equal))
+          (continued nil))
+      (slacko-render-tests--answering
+       '(("U1" . ((ok . t) (user . ((name . "al")
+                                    (profile . ((display_name . "Al")
+                                                (real_name . "Alan Kay")))))))
+         ("U2" . ((ok . t) (user . ((name . "bo")
+                                    (profile . ((display_name . "")
+                                                (real_name . "Bo Peep")))))))
+         ("U3" . ((ok . t) (user . ((name . "cy") (profile . nil)))))
+         ("U4" . nil)))
+      (slacko-render-fetch-users "host" '("U1" "U2" "U3" "U4")
+                                 (lambda () (setq continued t)))
+      (expect continued :to-be t)
+      (let ((args (spy-calls-args-for 'slacko-creds-api-request-async 0)))
+        (expect (nth 1 args) :to-equal "users.info")
+        (expect (nth 2 args) :to-equal '((user "U1"))))
+      (expect (slacko-render-cached-user "host" "U1") :to-equal "Al")
+      (expect (slacko-render-cached-user "host" "U2") :to-equal "Bo Peep")
+      (expect (slacko-render-cached-user "host" "U3") :to-equal "cy")
+      (expect (slacko-render-cached-user "host" "U4") :to-be nil))))
+
 (describe "slacko-render--group-members"
   (it "reads the members out of the name Slack gives a group"
     (expect (slacko-render--group-members "mpdm-alice--bob--carol-1")

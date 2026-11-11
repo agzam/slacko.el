@@ -335,25 +335,8 @@ What the results already say is free.  What is left costs one
 `users.info' request per person, once per session, and the candidates
 wait for it rather than showing a user id nobody can read."
   (slacko-consult--learn-names matches host)
-  (let ((unknown (slacko-consult--unknown-partners matches host)))
-    (if (null unknown)
-        (funcall callback)
-      (let ((pending (length unknown)))
-        (dolist (id unknown)
-          (slacko-creds-api-request-async
-           host "users.info" `((user ,id))
-           (lambda (data)
-             (when (eq (alist-get 'ok data) t)
-               (let ((profile (alist-get 'profile (alist-get 'user data))))
-                 (slacko-render-cache-user
-                  host id (or (slacko-render--non-empty
-                               (alist-get 'display_name profile))
-                              (slacko-render--non-empty
-                               (alist-get 'real_name profile))
-                              (alist-get 'name (alist-get 'user data))))))
-             (setq pending (1- pending))
-             (when (= 0 pending)
-               (funcall callback)))))))))
+  (slacko-render-fetch-users
+   host (slacko-consult--unknown-partners matches host) callback))
 
 (defun slacko-consult--fetch (query page async generation next)
   "Ask Slack for PAGE of QUERY and send what comes back to ASYNC.

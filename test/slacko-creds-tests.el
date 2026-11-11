@@ -186,6 +186,62 @@ With JSON nil the directory has no such file."
     (slacko-creds-tests--with-root-state "{\"workspaces\":"
       (expect (slacko-creds--root-state-hosts) :to-be nil))))
 
+(describe "slacko-creds--root-state-orgs"
+  (it "names each org and puts the one selected in the app first"
+    (slacko-creds-tests--with-root-state
+        (concat "{\"workspaces\":{"
+                "\"T1\":{\"name\":\"team\",\"url\":\"https://team.slack.com/\",\"order\":0},"
+                "\"T2\":{\"name\":\"other\",\"url\":\"https://other.slack.com/\",\"order\":1},"
+                "\"E1\":{\"name\":\"Acme\",\"order\":2,"
+                "\"url\":\"https://grid-acme.enterprise.slack.com/\"}},"
+                "\"workspacesMeta\":{\"selectedWorkspaceId\":\"E1\"}}")
+      (expect (slacko-creds--root-state-orgs)
+              :to-equal
+              '((:id "E1" :name "Acme" :host "grid-acme.enterprise.slack.com")
+                (:id "T1" :name "team" :host "team.slack.com")
+                (:id "T2" :name "other" :host "other.slack.com")))))
+
+  (it "falls back to the host when an org has no name"
+    (slacko-creds-tests--with-root-state
+        "{\"workspaces\":{\"T1\":{\"domain\":\"team\"}}}"
+      (expect (slacko-creds--root-state-orgs)
+              :to-equal '((:id "T1" :name "team.slack.com" :host "team.slack.com")))))
+
+  (it "leaves out an entry with neither url nor domain"
+    (slacko-creds-tests--with-root-state
+        "{\"workspaces\":{\"T1\":{\"name\":\"ghost\"}}}"
+      (expect (slacko-creds--root-state-orgs) :to-be nil)))
+
+  (it "returns nil without the file"
+    (slacko-creds-tests--with-root-state nil
+      (expect (slacko-creds--root-state-orgs) :to-be nil))))
+
+(describe "slacko-creds-async-all"
+  (it "calls back once, with every result in the order the functions came"
+    (let ((callbacks nil)
+          (calls nil))
+      (slacko-creds-async-all
+       (list (lambda (done) (push (cons 'a done) callbacks))
+             (lambda (done) (push (cons 'b done) callbacks)))
+       (lambda (results) (push results calls)))
+      (funcall (alist-get 'b callbacks) "second")
+      (expect calls :to-be nil)
+      (funcall (alist-get 'a callbacks) "first")
+      (expect calls :to-equal '(("first" "second")))))
+
+  (it "keeps a failed result as nil in its place"
+    (let ((result 'not-called))
+      (slacko-creds-async-all
+       (list (lambda (done) (funcall done nil))
+             (lambda (done) (funcall done "ok")))
+       (lambda (results) (setq result results)))
+      (expect result :to-equal '(nil "ok"))))
+
+  (it "calls back at once when there is nothing to wait for"
+    (let ((result 'not-called))
+      (slacko-creds-async-all nil (lambda (results) (setq result results)))
+      (expect result :to-be nil))))
+
 (describe "slacko-creds--discover-workspaces"
   (it "takes what root-state.json lists, without scanning IndexedDB"
     (spy-on 'slacko-creds--root-state-hosts :and-return-value '("team.slack.com"))
