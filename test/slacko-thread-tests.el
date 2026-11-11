@@ -146,6 +146,22 @@
               (expect (buffer-string) :to-match "hi again")))
         (when (buffer-live-p buffer) (kill-buffer buffer)))))
 
+  (it "leaves point at the end of the thread, after its latest reply"
+    (spy-on 'slacko-render-channel :and-return-value
+            '((id . "C456") (name . "general") (is_channel . t)))
+    (let ((buffer nil))
+      (unwind-protect
+          (progn
+            (slacko-thread--display
+             (list '((user . "U1") (ts . "1738226435.123456") (text . "question"))
+                   '((user . "U2") (ts . "1738226500.000100") (text . "answer")))
+             "team.slack.com" "C456"
+             "https://team.slack.com/archives/C456/p1738226435123456")
+            (setq buffer (car (spy-calls-args-for 'switch-to-buffer 0)))
+            (with-current-buffer buffer
+              (expect (point) :to-equal (point-max))))
+        (when (buffer-live-p buffer) (kill-buffer buffer)))))
+
   (it "opens a second thread of the same conversation beside the first"
     (spy-on 'slacko-render-channel :and-return-value
             '((id . "C456") (name . "general") (is_channel . t)))
@@ -168,6 +184,42 @@
             (expect (with-current-buffer (nth 1 buffers) (buffer-string))
                     :to-match "two"))
         (mapc #'kill-buffer (seq-filter #'buffer-live-p buffers))))))
+
+(describe "slacko-thread--display in a window"
+  :var (original)
+  (before-each
+    (setq original (window-buffer (selected-window)))
+    (spy-on 'slacko-render-resolve-user :and-return-value "alice")
+    (spy-on 'slacko-render-resolve-user-mentions :and-call-fake
+            (lambda (_host text) text))
+    (spy-on 'slacko-render-resolve-channel-mentions :and-call-fake
+            (lambda (_host text) text))
+    (spy-on 'slacko-render-channel :and-return-value
+            '((id . "C456") (name . "general") (is_channel . t))))
+
+  (after-each
+    (switch-to-buffer original))
+
+  (it "puts the window's point after the latest reply, refreshed or not"
+    (let ((messages (list '((user . "U1") (ts . "1738226435.123456") (text . "question"))
+                          '((user . "U2") (ts . "1738226500.000100") (text . "answer"))))
+          (url "https://team.slack.com/archives/C456/p1738226435123456")
+          (buffer nil))
+      (unwind-protect
+          (progn
+            (slacko-thread--display messages "team.slack.com" "C456" url)
+            (setq buffer (window-buffer (selected-window)))
+            (expect (buffer-name buffer) :to-equal "*Slack Thread: #general*")
+            (expect (window-point (selected-window))
+                    :to-equal (with-current-buffer buffer (point-max)))
+            ;; a window coming back to the buffer restores the point it had
+            (set-window-point (selected-window) 1)
+            (switch-to-buffer original)
+            (slacko-thread--display messages "team.slack.com" "C456" url)
+            (expect (window-buffer (selected-window)) :to-be buffer)
+            (expect (window-point (selected-window))
+                    :to-equal (with-current-buffer buffer (point-max))))
+        (when (buffer-live-p buffer) (kill-buffer buffer))))))
 
 (defconst slacko-thread-tests--messages
   '(((user . "U1") (ts . "1738226435.123456") (text . "question"))

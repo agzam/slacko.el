@@ -204,8 +204,14 @@ HOST is the workspace domain.  CHANNEL-ID and URL are for context."
         (slacko-thread-mode))
       ;; after the major mode, which wipes buffer-local state
       (setq slacko-thread--id id)
-      (goto-char (point-min)))
-    (switch-to-buffer buf)))
+      (goto-char (point-max)))
+    (switch-to-buffer buf)
+    ;; the latest reply is what matters; a window that showed the buffer
+    ;; before brings back its old point, so it is moved explicitly
+    (when-let* ((window (get-buffer-window buf)))
+      (with-selected-window window
+        (goto-char (point-max))
+        (recenter -1)))))
 
 ;;; Major Mode
 
